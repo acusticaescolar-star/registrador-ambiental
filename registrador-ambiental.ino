@@ -1,6 +1,6 @@
 // ============================================================
 // datalogger_test_v1.ino
-// Monitor Ambiental - firmware de prueba, verificacion y logging
+// Monitor Ambiental - firmware de prueba, verificación y logging
 //
 // Placa: YD-ESP32-S3 - WROOM-1-N16R8 - PCB 2022-V1.3
 // Board Arduino IDE: "ESP32S3 Dev Module"
@@ -12,7 +12,7 @@
 //    alimente el S8. Con el puente abierto el S8 no mide (CO2 = 0).
 //  - USB CDC On Boot debe estar en Enabled o no se ve el monitor.
 //
-// Librerias (Library Manager):
+// Librerías (Library Manager):
 //   - Sensirion I2C SHT4x  (Sensirion)
 //   - S8_UART              (jcomas)  -> el fichero es s8_uart.h (minusculas)
 //   - RTClib               (Adafruit)
@@ -35,7 +35,7 @@
 //   Solo se registra entre las 07:00 y las 19:00, todos los días (incluidos
 //   sabados y domingos, para permitir estudios de ruido exterior en fin de
 //   semana). Fuera de ese horario el sistema queda en espera sin escribir.
-//   Autonomia a 30 s de intervalo: >11 días incluso en el peor caso.
+//   Autonomía a 30 s de intervalo: >11 días incluso en el peor caso.
 //
 // FORMATO CSV:
 //   timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado
@@ -49,26 +49,26 @@
 //   Si aparece una marca ERR_, esa variable debe excluirse del análisis en
 //   las filas afectadas.
 //   Umbrales según RD 486/1997 Anexo III, RITE (IDA2) y CTE DB-HS 3.
-//   dB_LAeq  nivel continuo equivalente del intervalo. Promedia ENERGIA (no
+//   dB_LAeq  nivel continuo equivalente del intervalo. Promedia ENERGÍA (no
 //            decibelios), que es la magnitud correcta en acústica y la que
 //            exige la normativa.
 //   dB_fondo nivel de fondo (LA90 aprox.): el nivel que se supera el 90 % del
 //            tiempo. Describe el ruido sostenido del aula.
-//   dB_maxF  pico con ponderacion "Fast" (125 ms) reconstruida por software.
+//   dB_maxF  pico con ponderación "Fast" (125 ms) reconstruida por software.
 //            Es el comparable con un sonómetro comercial y con los umbrales
 //            de la normativa; sobre el se evaluan las alertas acústicas.
 //   dB_max   pico con las muestras crudas de 31 ms, sensible a impulsos
-//            breves (portazos, sillas). Se acerca a la ponderacion "Impulse".
+//            breves (portazos, sillas). Se acerca a la ponderación "Impulse".
 //            La diferencia dB_max - dB_maxF indica cuan impulsivo es el ruido:
 //            un impulso de 31 ms se atenua ~6,6 dB al aplicar Fast; uno
 //            sostenido de más de 500 ms, nada.
 //   eventos  número de veces que el nivel sube por encima del fondo más 10 dB.
 //
-//   Los tres últimos capturan la FLUCTUACION del ruido. El estudio BREATHE
-//   (Foraster et al., 2022, PLOS Medicine) hallo que dentro del aula la
+//   Los tres últimos capturan la FLUCTUACIÓN del ruido. El estudio BREATHE
+//   (Foraster et al., 2022, PLOS Medicine) halló que dentro del aula la
 //   fluctuación se asocia de forma consistente con el desarrollo cognitivo,
 //   mientras que el nivel medio apenas lo hace. Registrar solo el LAeq
-//   dejaria fuera la dimension que la investigacion senala como decisiva.
+//   dejaría fuera la dimensión que la investigación señala como decisiva.
 //   El rango dinámico (dB_max - dB_fondo) es el indicador de fluctuación más
 //   directo que puede derivarse de estos datos.
 //
@@ -83,7 +83,7 @@
 //   que el operador intervenga, y no informa de condiciones ambientales.
 //   NO codifica condiciones ambientales ni la ventana horaria. Si lo hiciera,
 //   los ocupantes sabrían cuando se mide o que el aire está cargado, y
-//   podrian ventilar o bajar la voz: el dato dejaria de reflejar el aula
+//   podrían ventilar o bajar la voz: el dato dejaría de reflejar el aula
 //   real (reactividad). Se mantiene encendido porque el modulo DS3231 ya
 //   lleva un LED de alimentación permanente e inevitable; el equipo se ve
 //   encendido igualmente. El comando L da un destello puntual más visible
@@ -94,12 +94,12 @@
 //   H   mostrar hora del RTC
 //   D   volcar el CSV guardado
 //   I   info del fichero y flash
-//   L   destello de comprobacion del estado
-//   X   BORRAR todos los datos (pide confirmacion)
+//   L   destello de comprobación del estado
+//   X   BORRAR todos los datos (pide confirmación)
 //   ?   ayuda
 // El registro de datos sigue activo mientras se aceptan comandos.
 // ============================================================
-// Autoria: www.acusticaescolar.com - Licencia MIT
+// Autoría: www.acusticaescolar.com - Licencia MIT
 // ============================================================
 
 #include <Wire.h>
@@ -127,15 +127,15 @@
 #define DBM_REG_DECIBEL   0x0A
 
 // Tiempo de promediado interno del sonómetro.
-// 125 ms equivale a la ponderacion temporal "Fast" de un sonómetro normalizado.
+// 125 ms equivale a la ponderación temporal "Fast" de un sonómetro normalizado.
 // Por defecto el modulo viene a 1000 ms ("Slow"), que suaviza los picos y
 // hace que el máximo del intervalo pierda significado acústico.
-#define DBM_TAVG_MS    31   // muestreo rapido, sensible a impulsos breves
+#define DBM_TAVG_MS    31   // muestreo rápido, sensible a impulsos breves
 
-// Reconstruccion de la ponderacion "Fast" (125 ms) por software.
+// Reconstrucción de la ponderación "Fast" (125 ms) por software.
 // El sonómetro promedia de forma exponencial. Muestreando a 31 ms se puede
-// reconstruir lo que marcaria a 125 ms aplicando un filtro exponencial de
-// primer orden sobre la ENERGIA: alpha = 1 - exp(-dt/tau).
+// reconstruir lo que marcaría a 125 ms aplicando un filtro exponencial de
+// primer orden sobre la ENERGÍA: alpha = 1 - exp(-dt/tau).
 // Así se obtienen a la vez el pico sensible a impulsos (dB_max) y el pico
 // normalizado comparable con un sonómetro comercial (dB_maxF).
 #define DBM_TAU_FAST_MS  125
@@ -144,8 +144,8 @@
 // -- Sobre la valoración de las condiciones --
 // El firmware NO clasifica las condiciones ambientales: registra los valores
 // medidos y deja la valoración para el análisis posterior. Así los datos no
-// caducan si cambian los umbrales normativos (RITE y CTE están en revision),
-// y las etiquetas de condición serian además redundantes: T_ALTA se deduce de
+// caducan si cambian los umbrales normativos (RITE y CTE están en revisión),
+// y las etiquetas de condición serían además redundantes: T_ALTA se deduce de
 // temp_C, CO2_MALA de co2_ppm, etc.
 // La tabla de interpretación (RD 486/1997 Anexo III, RITE IDA2, CTE DB-HS 3,
 // NTP 742) figura en el documento de proyecto, que es donde puede mantenerse
@@ -155,11 +155,11 @@
 // habría forma de saber si fue un fallo del sensor o una medida real.
 
 // -- Indicadores de fluctuación (marco BREATHE / Foraster et al. 2022) --
-// El estudio BREATHE (ISGlobal, 2.680 escolares de Barcelona) encontro que
-// dentro del aula la FLUCTUACION del ruido se asocia de forma consistente con
+// El estudio BREATHE (ISGlobal, 2.680 escolares de Barcelona) encontró que
+// dentro del aula la FLUCTUACIÓN del ruido se asocia de forma consistente con
 // el desarrollo cognitivo, mientras que el nivel medio apenas lo hace. Por eso
 // no basta con registrar el LAeq: se anaden el nivel de fondo y un contador de
-// eventos, que capturan esa dimension.
+// eventos, que capturan esa dimensión.
 #define DB_HIST_SIZE       128   // histograma de niveles (1 dB por casilla)
 #define DB_PERCENTIL_FONDO  10   // LA90: nivel superado el 90 % del tiempo
 #define EVENTO_MARGEN_DB    10   // un evento supera el fondo en esta cantidad
@@ -205,12 +205,12 @@ uint32_t rowCount = 0;
 // -- Seguimiento de picos de ruido dentro del intervalo --
 unsigned long lastDbSample = 0;
 uint8_t  dbMaxIntervalo = 0;    // pico observado en el intervalo actual
-double   dbSumaEnergia = 0.0;   // suma de energias para el LAeq
+double   dbSumaEnergia = 0.0;   // suma de energías para el LAeq
 uint16_t dbNumMuestras = 0;     // número de muestras acumuladas
-uint16_t dbHistograma[DB_HIST_SIZE];  // distribucion de niveles del intervalo
+uint16_t dbHistograma[DB_HIST_SIZE];  // distribución de niveles del intervalo
 uint8_t  dbFondoPrevio = 0;     // fondo del intervalo anterior (umbral eventos)
 double   dbEnergiaFast = 0.0;   // estado del filtro que reconstruye "Fast"
-uint8_t  dbMaxFast = 0;         // pico según ponderacion Fast reconstruida
+uint8_t  dbMaxFast = 0;         // pico según ponderación Fast reconstruida
 bool     dbFastIniciado = false;
 uint16_t dbEventos = 0;         // eventos detectados en el intervalo
 bool     dbEnEvento = false;    // estado del detector de eventos
@@ -223,7 +223,7 @@ void reiniciarAcumuladoresDb() {
   memset(dbHistograma, 0, sizeof(dbHistograma));
 }
 
-// Nivel de fondo del intervalo: percentil bajo de la distribucion (LA90),
+// Nivel de fondo del intervalo: percentil bajo de la distribución (LA90),
 // es decir, el nivel que se supera el 90 % del tiempo. Describe el ruido
 // sostenido sobre el que destacan los eventos.
 uint8_t calcularFondo() {
@@ -279,10 +279,10 @@ void ledError(int t){ for(int i=0;i<t;i++){ledRed();delay(200);ledOff();delay(20
 // -- LED de estado a brillo mínimo --
 // Durante el registro el LED queda encendido al mínimo perceptible, solo como
 // testigo de que el sistema funciona. NO codifica condiciones ambientales ni
-// la ventana horaria: si lo hiciera, delataria el estudio a los ocupantes.
+// la ventana horaria: si lo hiciera, delataría el estudio a los ocupantes.
 // Se mantiene encendido porque el modulo DS3231 ya lleva un LED de
 // alimentación permanente que no puede apagarse; el equipo se ve encendido
-// igualmente, de modo que un testigo tenue no anade información nueva.
+// igualmente, de modo que un testigo tenue no añade información nueva.
 #define BRILLO_MIN     3       // 3/255: visible de cerca, apenas perceptible
 #define BRILLO_ALERTA 90       // rojo bien visible para reclamar atención
 #define BLINK_MS     600UL     // periodo de parpadeo de la alerta
@@ -381,7 +381,7 @@ void fase1_scanI2C() {
     }
   }
   if (found == 0) {
-    Serial.println(F("  [!!] NO se encontro ningun dispositivo I2C."));
+    Serial.println(F("  [!!] NO se encontró ningún dispositivo I2C."));
     Serial.println(F("       Verifica SDA(53B), SCL(56B), 3V3, GND y pull-ups."));
   }
   auto chk = [](byte a)->bool{ Wire.beginTransmission(a); return Wire.endTransmission()==0; };
@@ -454,15 +454,15 @@ void fase3_pruebaLED() {
   Serial.println(F("  condiciones ambientales (ver nota de no interferencia)."));
   Serial.println(F(""));
 
-  // Comprobacion del hardware a brillo pleno: verifica que el WS2812B
+  // Comprobación del hardware a brillo pleno: verifica que el WS2812B
   // responde en los tres canales de color.
-  Serial.println(F("  Comprobacion de canales a brillo pleno:"));
+  Serial.println(F("  Comprobación de canales a brillo pleno:"));
   setLED(80,0,0);  Serial.println(F("    rojo"));  delay(500);
   setLED(0,80,0);  Serial.println(F("    verde")); delay(500);
   setLED(0,0,80);  Serial.println(F("    azul"));  delay(500);
   ledOff();        delay(300);
 
-  // Comprobacion de los dos estados reales de trabajo, a brillo mínimo:
+  // Comprobación de los dos estados reales de trabajo, a brillo mínimo:
   // es como se vera durante el estudio.
   Serial.println(F("\n  Estados de trabajo:"));
   ledEstadoOK();
@@ -518,7 +518,7 @@ void fase4_pruebaLittleFS() {
     Serial.printf("  [OK] Fichero de log existente: %s\n", CSV_FILENAME);
   }
   LittleFS.remove(tf);
-  Serial.println(F("  [OK] LittleFS: escritura/lectura/verificacion superadas."));
+  Serial.println(F("  [OK] LittleFS: escritura/lectura/verificación superadas."));
 }
 
 
@@ -553,10 +553,10 @@ bool escribirMarca(const char* tipo, const char* texto) {
 //           E Aula 2A / patio
 //
 // La exposición condiciona la interpretación. En un aula orientada al patio,
-// las franjas sin ocupacion NO reflejan el ruido exterior estructural: hay
-// alumnos esperando al comedor, educacion física, recreos escalonados. El
-// análisis lo tiene en cuenta y omite ahi la estimacion de fuentes, en lugar
-// de dar un número enganoso.
+// las franjas sin ocupación NO reflejan el ruido exterior estructural: hay
+// alumnos esperando al comedor, educación física, recreos escalonados. El
+// análisis lo tiene en cuenta y omite ahi la estimación de fuentes, en lugar
+// de dar un número engañoso.
 void fijarEspacio(const String& cmd) {
   String v = cmd.substring(1);
   v.trim();
@@ -564,7 +564,7 @@ void fijarEspacio(const String& cmd) {
     Serial.printf("Espacio actual: %s\n", espacioActual);
     Serial.println(F("Para cambiarlo:  E Aula 3B / calle"));
     Serial.println(F("Exposiciones:    calle | patio | interior | mixta"));
-    Serial.println(F("  calle    da a via publica: el exterior es sobre todo tráfico"));
+    Serial.println(F("  calle    da a vía pública: el exterior es sobre todo tráfico"));
     Serial.println(F("  patio    da al patio: actividad escolar al aire libre"));
     Serial.println(F("  interior da a un patio de luces o espacio cerrado"));
     Serial.println(F("  mixta    ventanas a más de una orientación"));
@@ -661,7 +661,7 @@ void logRow() {
     if (bajaAhora && !flashCasiLlena) {
       Serial.printf("\n[!!] AVISO: quedan %u KB de flash. Vuelca y borra los datos.\n\n",
         libre/1024);
-      ledEstadoFallo();       // rojo intermitente: requiere intervencion
+      ledEstadoFallo();       // rojo intermitente: requiere intervención
     } else if (!bajaAhora && flashCasiLlena && fallosEscritura == 0) {
       // Se ha liberado espacio y no hay otros fallos: volver a estado normal
       Serial.println(F("[OK] Espacio de almacenamiento restablecido.\n"));
@@ -677,7 +677,7 @@ void logRow() {
   snprintf(row,sizeof(row),"%s,%.2f,%.1f,%d,%d,%d,%d,%d,%u,%s",
     ts, t, h, co2, dbEq, dbFondo, dbMaxF, dbMax, eventos, estado);
 
-  // Escritura con verificacion: si falla, se contabiliza y se avisa
+  // Escritura con verificación: si falla, se contabiliza y se avisa
   bool guardado = false;
   if(littlefs_ok){
     File f=LittleFS.open(CSV_FILENAME,"a");
@@ -737,7 +737,7 @@ void mostrarAyuda() {
   Serial.println(F("  H  Mostrar la hora actual del reloj"));
   Serial.println(F("  D  Volcar por pantalla todo el CSV guardado"));
   Serial.println(F("  I  Info: espacio, registros, estado y autonomía"));
-  Serial.println(F("  L  Destello de comprobacion del equipo"));
+  Serial.println(F("  L  Destello de comprobación del equipo"));
   Serial.println(F("  X  BORRAR todos los datos (pide confirmar con SI)"));
   Serial.println(F("  ?  Esta ayuda"));
   Serial.println(F(""));
@@ -795,10 +795,10 @@ void infoCSV() {
     f.close();
     int regs = ln>0?ln-1:0;
     Serial.printf("CSV: %u bytes, %d registros\n", by, regs);
-    // Autonomia estimada en el peor caso (86 B/fila, todas las alertas)
+    // Autonomía estimada en el peor caso (86 B/fila, todas las alertas)
     uint32_t regDia = ((HORA_FIN-HORA_INICIO)*3600UL)/(LOG_INTERVAL_MS/1000);
     uint32_t capacidad = libre / 86;
-    Serial.printf("Autonomia restante (peor caso): %lu registros = %.1f días\n",
+    Serial.printf("Autonomía restante (peor caso): %lu registros = %.1f días\n",
       capacidad, (float)capacidad/regDia);
   }
   Serial.printf("Estado: %s\n", enVentanaHoraria() ? "REGISTRANDO" : "en espera (fuera de horario)");
@@ -808,11 +808,11 @@ void infoCSV() {
     Serial.println(F("[!!] Flash por debajo del umbral: vuelca y borra los datos."));
 }
 
-// Comprobacion de funcionamiento bajo demanda: un único destello verde.
+// Comprobación de funcionamiento bajo demanda: un único destello verde.
 // Se usa solo cuando el operador está presente; el resto del tiempo el LED
 // permanece apagado para no señalizar la medición a los ocupantes.
 void comprobarVida() {
-  Serial.println(F("Destello de comprobacion (el LED vuelve al brillo mínimo)."));
+  Serial.println(F("Destello de comprobación (el LED vuelve al brillo mínimo)."));
   bool todoOk = sht41_ok && dbmeter_ok && ds3231_ok && s8_ok && littlefs_ok
                 && fallosEscritura == 0 && !flashCasiLlena;
   ledGreen(); delay(400);
@@ -827,7 +827,7 @@ void comprobarVida() {
   }
 }
 
-// Borrado del CSV. Pide confirmacion explicita: es irreversible y elimina
+// Borrado del CSV. Pide confirmación explicita: es irreversible y elimina
 // todos los datos registrados. Tras borrar, se recrea el fichero con su
 // cabecera para que el registro continue sin necesidad de reiniciar.
 void borrarCSV() {
@@ -843,7 +843,7 @@ void borrarCSV() {
   Serial.printf("\n[!] Se van a BORRAR %d registros. Es IRREVERSIBLE.\n", ln > 0 ? ln-1 : 0);
   Serial.println(F("    Escribe SI (mayusculas) para confirmar, o cualquier otra cosa para cancelar."));
 
-  // Esperar confirmacion con limite de tiempo (evita bloqueo indefinido)
+  // Esperar confirmación con límite de tiempo (evita bloqueo indefinido)
   unsigned long limite = millis() + 30000UL;
   while (!Serial.available()) {
     if (millis() > limite) {
@@ -948,7 +948,7 @@ void setup() {
   if(rtc.begin(&Wire)){
     ds3231_ok=true;
     if(rtc.lostPower()){
-      Serial.println(F("  [!] DS3231 perdio alimentación. Ajusta la hora con el comando T."));
+      Serial.println(F("  [!] DS3231 perdió alimentación. Ajusta la hora con el comando T."));
     }
     DateTime n=rtc.now();
     Serial.printf("  [OK] DS3231: %04d-%02d-%02d %02d:%02d:%02d\n",
@@ -960,7 +960,7 @@ void setup() {
   fase3_pruebaLED();
   fase4_pruebaLittleFS();
 
-  Serial.println(F("\n== RESUMEN DE DIAGNOSTICO =="));
+  Serial.println(F("\n== RESUMEN DE DIAGNÓSTICO =="));
   Serial.printf("  SHT41 (T/H)       : %s\n", sht41_ok    ? "OK":"FALLO");
   Serial.printf("  DBMETER (dB)      : %s\n", dbmeter_ok  ? "OK":"FALLO");
   Serial.printf("  DS3231 (RTC)      : %s\n", ds3231_ok   ? "OK":"FALLO");
@@ -969,12 +969,12 @@ void setup() {
   int ok=sht41_ok+dbmeter_ok+ds3231_ok+s8_ok+littlefs_ok;
   Serial.printf("\n  %d/5 componentes OK.\n", ok);
   if(ok==5){ Serial.println(F("  Sistema completo. Iniciando logging...")); ledGreen(); }
-  else     { Serial.println(F("  [!] Hay fallos. Revisa el diagnostico.")); ledError(3); }
+  else     { Serial.println(F("  [!] Hay fallos. Revisa el diagnóstico.")); ledError(3); }
 
   // Al iniciar el registro el LED pasa a brillo mínimo como simple testigo de
   // funcionamiento. No cambia con las condiciones ambientales ni con la
   // ventana horaria, para no señalizar la medición a los ocupantes.
-  delay(1500);   // margen para que el operador vea el resultado del diagnostico
+  delay(1500);   // margen para que el operador vea el resultado del diagnóstico
   if (ok==5) ledEstadoOK(); else ledEstadoFallo();
 
   lastLog = millis() - LOG_INTERVAL_MS;
@@ -1026,17 +1026,17 @@ void loop() {
     uint8_t db = readDBMeter();
     if (db > 0) {
       if (db > dbMaxIntervalo) dbMaxIntervalo = db;
-      // El nivel equivalente promedia ENERGIA, no decibelios: la escala es
+      // El nivel equivalente promedia ENERGÍA, no decibelios: la escala es
       // logarítmica y una media aritmética de dB subestima los picos.
-      double energía = pow(10.0, db / 10.0);
-      dbSumaEnergia += energía;
+      double energia = pow(10.0, db / 10.0);
+      dbSumaEnergia += energia;
       if (db < DB_HIST_SIZE) dbHistograma[db]++;
       dbNumMuestras++;
 
-      // Filtro exponencial sobre la energía: reconstruye la ponderacion
-      // temporal "Fast" (125 ms) a partir de las muestras rapidas de 31 ms.
-      if (!dbFastIniciado) { dbEnergiaFast = energía; dbFastIniciado = true; }
-      else dbEnergiaFast += ALPHA_FAST * (energía - dbEnergiaFast);
+      // Filtro exponencial sobre la energía: reconstruye la ponderación
+      // temporal "Fast" (125 ms) a partir de las muestras rápidas de 31 ms.
+      if (!dbFastIniciado) { dbEnergiaFast = energia; dbFastIniciado = true; }
+      else dbEnergiaFast += ALPHA_FAST * (energia - dbEnergiaFast);
       uint8_t dbF = (uint8_t)lround(10.0 * log10(dbEnergiaFast));
       if (dbF > dbMaxFast) dbMaxFast = dbF;
 
