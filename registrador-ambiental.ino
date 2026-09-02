@@ -251,7 +251,7 @@ bool flashCasiLlena = false;
 // varios días de varios espacios los datos quedarian mezclados sin remedio.
 // Se guarda como linea de marca en el CSV, no como columna, para no repetir
 // el nombre en cada registro.
-#define ESPACIO_MAX 48
+#define ESPACIO_MAX 96
 char espacioActual[ESPACIO_MAX] = "sin identificar";
 
 // -- Ventana horaria --
@@ -545,73 +545,89 @@ bool escribirMarca(const char* tipo, const char* texto) {
   return true;
 }
 
-// Identifica el espacio que se está midiendo y su exposición acústica.
+// Identifica el espacio que se está midiendo y sus características acústicas.
 // Se anota al instalar el equipo en cada aula: a partir de ese momento los
 // registros pertenecen a ese espacio.
 //
-// Formato:  E Aula 3B / calle
-//           E Aula 2A / patio
+// Formato:  E Aula 3B / calle / RT 0.85 / STI 0.62
 //
-// La exposición condiciona la interpretación. En un aula orientada al patio,
-// las franjas sin ocupación NO reflejan el ruido exterior estructural: hay
-// alumnos esperando al comedor, educación física, recreos escalonados. El
-// análisis lo tiene en cuenta y omite ahi la estimación de fuentes, en lugar
-// de dar un número engañoso.
+//   nombre       obligatorio
+//   exposición   calle | patio | interior | mixta
+//   RT           tiempo de reverberación en segundos (T30, promedio de las
+//                bandas de 500, 1000 y 2000 Hz, aula desocupada)
+//   STI          índice de inteligibilidad del habla (0 a 1)
+//
+// Todo salvo el nombre es opcional, y el orden de los campos es indiferente.
+// El equipo NO mide la reverberación ni el STI: requieren excitación impulsiva
+// y análisis del decaimiento. Se introducen aquí los valores obtenidos con
+// otro instrumento para que queden asociados al espacio y el análisis pueda
+// valorar su calidad estructural completa.
+//
+// Si al instalar el equipo aún no se conocen, basta con volver a ejecutar el
+// comando más tarde con el mismo nombre: el análisis fusiona los datos.
+//
+// Referencias: ANSI/ASA S12.60 fija RT <= 0,6 s (aulas hasta 283 m3) y
+// <= 0,7 s (283-566 m3). DIN 18041 exige STI >= 0,65 en salas de comunicación.
 void fijarEspacio(const String& cmd) {
   String v = cmd.substring(1);
   v.trim();
   if (v.length() == 0) {
     Serial.printf("Espacio actual: %s\n", espacioActual);
-    Serial.println(F("Para cambiarlo:  E Aula 3B / calle"));
-    Serial.println(F("Exposiciones:    calle | patio | interior | mixta"));
-    Serial.println(F("  calle    da a vía pública: el exterior es sobre todo tráfico"));
-    Serial.println(F("  patio    da al patio: actividad escolar al aire libre"));
-    Serial.println(F("  interior da a un patio de luces o espacio cerrado"));
-    Serial.println(F("  mixta    ventanas a más de una orientación"));
+    Serial.println(F(""));
+    Serial.println(F("Formato:  E Aula 3B / calle / RT 0.85 / STI 0.62"));
+    Serial.println(F("  exposición: calle | patio | interior | mixta"));
+    Serial.println(F("    calle     da a vía pública: el exterior es sobre todo tráfico"));
+    Serial.println(F("    patio     da al patio: actividad escolar al aire libre"));
+    Serial.println(F("    interior  da a patio de luces o espacio cerrado"));
+    Serial.println(F("    mixta     ventanas a más de una orientación"));
+    Serial.println(F("  RT   reverberación en segundos (T30, media de 500/1k/2k Hz)"));
+    Serial.println(F("  STI  índice de inteligibilidad (0 a 1)"));
+    Serial.println(F(""));
+    Serial.println(F("Todo salvo el nombre es opcional. El equipo no mide RT ni STI:"));
+    Serial.println(F("introduce los valores medidos con otro instrumento. Si aún no"));
+    Serial.println(F("los conoces, repite el comando más tarde con el mismo nombre."));
     return;
   }
-  // Avisar si no se indica exposición, pero aceptarlo igualmente
-  if (v.indexOf('/') < 0) {
-    Serial.println(F("[i] No has indicado la exposición. Ejemplo: E Aula 3B / calle"));
-    Serial.println(F("    Sin ella, el análisis no puede interpretar el ruido exterior."));
-  }
+
+  // Avisos orientativos según lo que se haya indicado
+  bool tieneExpo = false, tieneRT = false, tieneSTI = false;
+  String low = v; low.toLowerCase();
+  if (low.indexOf("calle")>=0 || low.indexOf("patio")>=0 ||
+      low.indexOf("interior")>=0 || low.indexOf("mixta")>=0) tieneExpo = true;
+  int pRT  = low.indexOf("rt");
+  int pSTI = low.indexOf("sti");
+  tieneRT  = (pRT  >= 0);
+  tieneSTI = (pSTI >= 0);
+
   v.toCharArray(espacioActual, ESPACIO_MAX);
   escribirMarca("ESPACIO", espacioActual);
-}
 
-// Anota el tiempo de reverberación del espacio (RT60, en segundos).
-// El dispositivo NO lo mide: requiere excitación impulsiva y análisis del
-// decaimiento, fuera del alcance de un sonómetro de nivel. Se introduce aquí
-// el valor obtenido por otro método, para que quede asociado al espacio y el
-// análisis pueda valorar la calidad estructural del aula completa.
-//
-// La norma ANSI/ASA S12.60 fija un máximo de 0,6 s para aulas de hasta 283 m³
-// y 0,7 s para las de 283 a 566 m³, medido con el aula desocupada y amueblada.
-//
-// Formato:  R 0.85
-void anotarReverberacion(const String& cmd) {
-  String v = cmd.substring(1);
-  v.trim();
-  if (v.length() == 0) {
-    Serial.println(F("Tiempo de reverberación del espacio (RT60), en segundos."));
-    Serial.println(F("  Ejemplo:  R 0.85"));
-    Serial.println(F("  El equipo no lo mide: introduce el valor medido por otro método."));
-    Serial.println(F("  Referencia ANSI/ASA S12.60: max. 0,6 s (aulas hasta 283 m3)"));
-    Serial.println(F("                              max. 0,7 s (283-566 m3)"));
-    return;
+  if (!tieneExpo) {
+    Serial.println(F("  [i] Sin exposición indicada. Añádela: E ... / calle"));
+    Serial.println(F("      Sin ella no puede interpretarse el ruido exterior."));
   }
-  float rt = v.toFloat();
-  if (rt <= 0.0 || rt > 10.0) {
-    Serial.println(F("[!] Valor fuera de rango. Debe estar entre 0.1 y 10 segundos."));
-    Serial.println(F("    Ejemplo:  R 0.85"));
-    return;
+  if (!tieneRT) {
+    Serial.println(F("  [i] Sin reverberación (RT). La valoración estructural queda"));
+    Serial.println(F("      incompleta: mídela con otro instrumento y repite el comando."));
   }
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%.2f", rt);
-  escribirMarca("RT60", buf);
-  if (rt <= 0.6)      Serial.println(F("    Cumple el criterio ANSI para aulas de hasta 283 m3."));
-  else if (rt <= 0.7) Serial.println(F("    Cumple para aulas de 283-566 m3; excede para las menores."));
-  else                Serial.println(F("    Excede el maximo de la norma: la inteligibilidad se resiente."));
+  if (tieneRT) {
+    // Valorar el RT frente al criterio ANSI
+    float rt = v.substring(pRT+2).toFloat();
+    if (rt > 0) {
+      if (rt <= 0.6)      Serial.println(F("  [OK] RT cumple ANSI S12.60 (aulas hasta 283 m3)."));
+      else if (rt <= 0.7) Serial.println(F("  [i]  RT cumple para 283-566 m3; excede para aulas menores."));
+      else                Serial.println(F("  [!]  RT excede la norma: la inteligibilidad se resiente."));
+    }
+  }
+  if (tieneSTI) {
+    float sti = v.substring(pSTI+3).toFloat();
+    if (sti > 0) {
+      if (sti >= 0.75)      Serial.println(F("  [OK] STI excelente."));
+      else if (sti >= 0.65) Serial.println(F("  [OK] STI cumple DIN 18041 (salas de comunicación)."));
+      else if (sti >= 0.60) Serial.println(F("  [i]  STI aceptable, por debajo del criterio DIN 18041."));
+      else                  Serial.println(F("  [!]  STI insuficiente: la voz no se entiende bien."));
+    }
+  }
 }
 
 // Anota una incidencia con su hora: obras en el pasillo, ventana abierta,
@@ -757,17 +773,14 @@ void mostrarAyuda() {
   Serial.println(F("     así que solo hay que ajustarlo una vez."));
   Serial.println(F(""));
   Serial.println(F("  E  IDENTIFICAR EL ESPACIO y su exposición acústica"));
-  Serial.println(F("     Ejemplo:  E Aula 3B / calle"));
+  Serial.println(F("     Ejemplo:  E Aula 3B / calle / RT 0.85 / STI 0.62"));
   Serial.println(F("     Exposiciones: calle | patio | interior | mixta"));
+  Serial.println(F("     RT y STI son opcionales: medidos con otro instrumento."));
+  Serial.println(F("     Escribe solo E para ver el formato completo."));
   Serial.println(F("     Hazlo SIEMPRE al instalar el equipo en un aula nueva."));
   Serial.println(F("     Sin esta marca, al volcar varios espacios los datos"));
   Serial.println(F("     quedan mezclados y no hay forma de separarlos."));
   Serial.println(F("     Escribe solo E para ver el espacio actual."));
-  Serial.println(F(""));
-  Serial.println(F("  R  TIEMPO DE REVERBERACIÓN del espacio (RT60, segundos)"));
-  Serial.println(F("     Ejemplo:  R 0.85"));
-  Serial.println(F("     El equipo no lo mide: introduce el valor medido aparte."));
-  Serial.println(F("     Sin él, la valoración estructural del aula queda incompleta."));
   Serial.println(F(""));
   Serial.println(F("  N  ANOTAR UNA INCIDENCIA con su hora"));
   Serial.println(F("     Ejemplo:  N obras en el pasillo"));
@@ -928,7 +941,6 @@ void procesarComando() {
     case 'L': case 'l': comprobarVida();        break;
     case 'E': case 'e': fijarEspacio(cmd);      break;
     case 'N': case 'n': anotarNota(cmd);        break;
-    case 'R': case 'r': anotarReverberacion(cmd); break;
     case 'X': case 'x': borrarCSV();            break;
     case '?':           mostrarAyuda();         break;
     default: Serial.printf("Comando '%c' no reconocido. ? para ayuda.\n", cmd.charAt(0));
@@ -1027,8 +1039,8 @@ void setup() {
   Serial.println(F(">> LED a brillo mínimo: solo testigo de funcionamiento."));
   Serial.println(F(">> No indica condiciones ambientales, para no contaminar el estudio."));
   Serial.println(F(">> IMPORTANTE: identifica el espacio con E antes de empezar."));
-  Serial.println(F(">>   Ejemplo:  E Aula 3B / calle"));
-  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio R=reverb N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
+  Serial.println(F(">>   Ejemplo:  E Aula 3B / calle / RT 0.85"));
+  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
   Serial.println(F(">> Ejemplo para ajustar hora: T2026-08-06 06:50:00\n"));
 }
 
