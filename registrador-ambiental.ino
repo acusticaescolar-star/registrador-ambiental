@@ -38,21 +38,42 @@
 //   Autonomia a 30 s de intervalo: >11 dias incluso en el peor caso.
 //
 // FORMATO CSV:
-//   timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_max,alertas
-//   El campo 'alertas' lleva las etiquetas activas separadas por ';' u "OK".
-//   Etiquetas de condicion:
-//     T_BAJA T_ALTA T_RIESGO / HR_BAJA HR_ALTA /
-//     CO2_DEFIC CO2_MALA CO2_RIESGO / DB_ELEV DB_RIESGO
-//   Etiquetas de fiabilidad del dato (imprescindibles en estudio desatendido):
+//   timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado
+
+//   El campo "estado" marca la FIABILIDAD del dato, no la valoracion de las
+//   condiciones (esa se hace al analizar, con la tabla del documento de
+//   proyecto). Vale "OK" o una o mas de estas marcas separadas por ';':
 //     ERR_TH ERR_CO2 ERR_DB   sensor sin respuesta valida en esa lectura
 //     ERR_RTC                 marca de tiempo no fiable
 //     FLASH_BAJA              queda poco espacio de almacenamiento
+//   Si aparece una marca ERR_, esa variable debe excluirse del analisis en
+//   las filas afectadas.
 //   Umbrales segun RD 486/1997 Anexo III, RITE (IDA2) y CTE DB-HS 3.
-//   dB_LAeq es el nivel continuo equivalente del intervalo: promedia ENERGIA
-//   (no decibelios), que es la magnitud correcta en acustica. Una media
-//   aritmetica de dB subestimaria los picos por ser escala logaritmica.
-//   dB_max es el pico observado. El sonometro se muestrea cada 125 ms, al
-//   mismo ritmo que su promediado interno ("Fast"), para no perder picos.
+//   dB_LAeq  nivel continuo equivalente del intervalo. Promedia ENERGIA (no
+//            decibelios), que es la magnitud correcta en acustica y la que
+//            exige la normativa.
+//   dB_fondo nivel de fondo (LA90 aprox.): el nivel que se supera el 90 % del
+//            tiempo. Describe el ruido sostenido del aula.
+//   dB_maxF  pico con ponderacion "Fast" (125 ms) reconstruida por software.
+//            Es el comparable con un sonometro comercial y con los umbrales
+//            de la normativa; sobre el se evaluan las alertas acusticas.
+//   dB_max   pico con las muestras crudas de 31 ms, sensible a impulsos
+//            breves (portazos, sillas). Se acerca a la ponderacion "Impulse".
+//            La diferencia dB_max - dB_maxF indica cuan impulsivo es el ruido:
+//            un impulso de 31 ms se atenua ~6,6 dB al aplicar Fast; uno
+//            sostenido de mas de 500 ms, nada.
+//   eventos  numero de veces que el nivel sube por encima del fondo mas 10 dB.
+//
+//   Los tres ultimos capturan la FLUCTUACION del ruido. El estudio BREATHE
+//   (Foraster et al., 2022, PLOS Medicine) hallo que dentro del aula la
+//   fluctuacion se asocia de forma consistente con el desarrollo cognitivo,
+//   mientras que el nivel medio apenas lo hace. Registrar solo el LAeq
+//   dejaria fuera la dimension que la investigacion senala como decisiva.
+//   El rango dinamico (dB_max - dB_fondo) es el indicador de fluctuacion mas
+//   directo que puede derivarse de estos datos.
+//
+//   El sonometro se muestrea cada 125 ms, al mismo ritmo que su promediado
+//   interno ("Fast"), para no perder picos.
 //
 // NO INTERFERENCIA CON EL ESTUDIO:
 //   Durante el registro el LED queda a brillo minimo (3/255) como simple
@@ -109,23 +130,40 @@
 // 125 ms equivale a la ponderacion temporal "Fast" de un sonometro normalizado.
 // Por defecto el modulo viene a 1000 ms ("Slow"), que suaviza los picos y
 // hace que el maximo del intervalo pierda significado acustico.
-#define DBM_TAVG_MS   125
+#define DBM_TAVG_MS    31   // muestreo rapido, sensible a impulsos breves
 
-// -- Umbrales de alerta (tabla de interpretacion, RD 486/1997 - RITE - CTE) --
-// Temperatura (RD 486/1997 Anexo III, trabajo sedentario 17-27 C)
-#define T_MIN_LEGAL   17.0    // por debajo: incumplimiento
-#define T_MAX_LEGAL   27.0    // por encima: incumplimiento
-#define T_RIESGO      30.0    // evaluar estres termico (mod. RDL 4/2023)
-// Humedad relativa (RD 486/1997 Anexo III, 30-70%)
-#define HR_MIN_LEGAL  30.0
-#define HR_MAX_LEGAL  70.0
-// CO2 (RITE IDA2 aulas / CTE DB-HS 3)
-#define CO2_DEFIC      900    // CTE: media anual < 900 ppm
-#define CO2_MALA      1200    // NTP 742: mala calidad
-#define CO2_RIESGO    1600    // CTE: nunca superar
-// Nivel sonoro
-#define DB_ELEVADO      55    // esfuerzo vocal del docente
-#define DB_RIESGO       65    // comunicacion comprometida
+// Reconstruccion de la ponderacion "Fast" (125 ms) por software.
+// El sonometro promedia de forma exponencial. Muestreando a 31 ms se puede
+// reconstruir lo que marcaria a 125 ms aplicando un filtro exponencial de
+// primer orden sobre la ENERGIA: alpha = 1 - exp(-dt/tau).
+// Asi se obtienen a la vez el pico sensible a impulsos (dB_max) y el pico
+// normalizado comparable con un sonometro comercial (dB_maxF).
+#define DBM_TAU_FAST_MS  125
+#define ALPHA_FAST  0.2196f   // 1 - exp(-31/125)
+
+// -- Sobre la valoracion de las condiciones --
+// El firmware NO clasifica las condiciones ambientales: registra los valores
+// medidos y deja la valoracion para el analisis posterior. Asi los datos no
+// caducan si cambian los umbrales normativos (RITE y CTE estan en revision),
+// y las etiquetas de condicion serian ademas redundantes: T_ALTA se deduce de
+// temp_C, CO2_MALA de co2_ppm, etc.
+// La tabla de interpretacion (RD 486/1997 Anexo III, RITE IDA2, CTE DB-HS 3,
+// NTP 742) figura en el documento de proyecto, que es donde puede mantenerse
+// actualizada.
+// El campo "estado" del CSV solo informa de la FIABILIDAD del dato, que NO es
+// derivable de los valores: si una lectura de CO2 vale 0, sin la marca no
+// habria forma de saber si fue un fallo del sensor o una medida real.
+
+// -- Indicadores de fluctuacion (marco BREATHE / Foraster et al. 2022) --
+// El estudio BREATHE (ISGlobal, 2.680 escolares de Barcelona) encontro que
+// dentro del aula la FLUCTUACION del ruido se asocia de forma consistente con
+// el desarrollo cognitivo, mientras que el nivel medio apenas lo hace. Por eso
+// no basta con registrar el LAeq: se anaden el nivel de fondo y un contador de
+// eventos, que capturan esa dimension.
+#define DB_HIST_SIZE       128   // histograma de niveles (1 dB por casilla)
+#define DB_PERCENTIL_FONDO  10   // LA90: nivel superado el 90 % del tiempo
+#define EVENTO_MARGEN_DB    10   // un evento supera el fondo en esta cantidad
+#define EVENTO_HISTERESIS    3   // margen de salida, evita contar rebotes
 
 // -- Muestreo del sonometro --
 // Se muestrea al mismo ritmo que el promediado interno (125 ms) para no
@@ -169,6 +207,36 @@ unsigned long lastDbSample = 0;
 uint8_t  dbMaxIntervalo = 0;    // pico observado en el intervalo actual
 double   dbSumaEnergia = 0.0;   // suma de energias para el LAeq
 uint16_t dbNumMuestras = 0;     // numero de muestras acumuladas
+uint16_t dbHistograma[DB_HIST_SIZE];  // distribucion de niveles del intervalo
+uint8_t  dbFondoPrevio = 0;     // fondo del intervalo anterior (umbral eventos)
+double   dbEnergiaFast = 0.0;   // estado del filtro que reconstruye "Fast"
+uint8_t  dbMaxFast = 0;         // pico segun ponderacion Fast reconstruida
+bool     dbFastIniciado = false;
+uint16_t dbEventos = 0;         // eventos detectados en el intervalo
+bool     dbEnEvento = false;    // estado del detector de eventos
+
+// Vacia el histograma y los acumuladores del intervalo
+void reiniciarAcumuladoresDb() {
+  reiniciarAcumuladoresDb();
+  dbEventos = 0; dbEnEvento = false;
+  dbMaxFast = 0; dbFastIniciado = false;
+  memset(dbHistograma, 0, sizeof(dbHistograma));
+}
+
+// Nivel de fondo del intervalo: percentil bajo de la distribucion (LA90),
+// es decir, el nivel que se supera el 90 % del tiempo. Describe el ruido
+// sostenido sobre el que destacan los eventos.
+uint8_t calcularFondo() {
+  if (dbNumMuestras == 0) return 0;
+  uint32_t objetivo = (uint32_t)dbNumMuestras * DB_PERCENTIL_FONDO / 100;
+  if (objetivo == 0) objetivo = 1;
+  uint32_t acumulado = 0;
+  for (uint8_t i = 0; i < DB_HIST_SIZE; i++) {
+    acumulado += dbHistograma[i];
+    if (acumulado >= objetivo) return i;
+  }
+  return 0;
+}
 
 // -- Control de espacio en flash --
 // Si el espacio libre baja de este umbral, el sistema avisa (LED rojo tenue)
@@ -177,6 +245,14 @@ uint16_t dbNumMuestras = 0;     // numero de muestras acumuladas
 #define FLASH_MIN_KB   60      // umbral de aviso
 uint16_t fallosEscritura = 0;  // registros que no se pudieron guardar
 bool flashCasiLlena = false;
+
+// -- Identificacion del espacio medido --
+// Imprescindible cuando el equipo rota entre aulas: sin esta marca, al volcar
+// varios dias de varios espacios los datos quedarian mezclados sin remedio.
+// Se guarda como linea de marca en el CSV, no como columna, para no repetir
+// el nombre en cada registro.
+#define ESPACIO_MAX 48
+char espacioActual[ESPACIO_MAX] = "sin identificar";
 
 // -- Ventana horaria --
 bool enVentanaAnterior = true;  // para avisar solo en los cambios de estado
@@ -421,9 +497,9 @@ void fase4_pruebaLittleFS() {
   const char* tf="/test_escritura.csv";
   File f=LittleFS.open(tf,"w");
   if(!f){ Serial.println(F("  [!!] No se puede crear fichero.")); littlefs_ok=false; return; }
-  f.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_max,alertas");
-  f.println("2025-04-15T09:00:00,22.50,55.0,750,48,52,OK");
-  f.println("2025-04-15T09:00:03,28.10,45.0,1350,58,71,CO2_MALA;DB_RIESGO");
+  f.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
+  f.println("2025-04-15T09:00:00,22.50,55.0,750,48,42,50,52,3,OK");
+  f.println("2025-04-15T09:00:03,28.10,45.0,1350,58,44,66,71,12,ERR_CO2");
   f.close();
   Serial.printf("  [OK] Fichero de prueba escrito: %s\n", tf);
 
@@ -435,7 +511,7 @@ void fase4_pruebaLittleFS() {
 
   if(!LittleFS.exists(CSV_FILENAME)){
     File lg=LittleFS.open(CSV_FILENAME,"w");
-    lg.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_max,alertas");
+    lg.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
     lg.close();
     Serial.printf("  [OK] Fichero de log creado: %s\n", CSV_FILENAME);
   } else {
@@ -450,11 +526,77 @@ void fase4_pruebaLittleFS() {
 // FASE 5 - Registro de una fila
 // ============================================================
 
-// Construye la cadena de alertas activas separadas por ';'
-// Devuelve "OK" si ninguna variable esta fuera de rango.
-void construirAlertas(char* buf, size_t n, float t, float h, int co2,
-                      uint8_t dbMed, uint8_t dbMax,
-                      bool errTH, bool errCO2, bool errDB, bool errRTC) {
+// Escribe una linea de marca en el CSV. Las marcas empiezan por '#' y llevan
+// su propio timestamp: sirven para segmentar el analisis por espacio y para
+// dejar constancia de incidencias con la hora exacta en que ocurrieron.
+bool escribirMarca(const char* tipo, const char* texto) {
+  if (!littlefs_ok) { Serial.println(F("[!] LittleFS no disponible.")); return false; }
+  char ts[25] = "0000-00-00T00:00:00";
+  if (ds3231_ok) {
+    DateTime n = rtc.now();
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02d",
+      n.year(), n.month(), n.day(), n.hour(), n.minute(), n.second());
+  }
+  File f = LittleFS.open(CSV_FILENAME, "a");
+  if (!f) { Serial.println(F("[!] No se pudo escribir la marca.")); return false; }
+  f.printf("#%s,%s,%s\n", tipo, ts, texto);
+  f.close();
+  Serial.printf("[OK] #%s  %s  %s\n", tipo, ts, texto);
+  return true;
+}
+
+// Identifica el espacio que se esta midiendo y su exposicion acustica.
+// Se anota al instalar el equipo en cada aula: a partir de ese momento los
+// registros pertenecen a ese espacio.
+//
+// Formato:  E Aula 3B / calle
+//           E Aula 2A / patio
+//
+// La exposicion condiciona la interpretacion. En un aula orientada al patio,
+// las franjas sin ocupacion NO reflejan el ruido exterior estructural: hay
+// alumnos esperando al comedor, educacion fisica, recreos escalonados. El
+// analisis lo tiene en cuenta y omite ahi la estimacion de fuentes, en lugar
+// de dar un numero enganoso.
+void fijarEspacio(const String& cmd) {
+  String v = cmd.substring(1);
+  v.trim();
+  if (v.length() == 0) {
+    Serial.printf("Espacio actual: %s\n", espacioActual);
+    Serial.println(F("Para cambiarlo:  E Aula 3B / calle"));
+    Serial.println(F("Exposiciones:    calle | patio | interior | mixta"));
+    Serial.println(F("  calle    da a via publica: el exterior es sobre todo trafico"));
+    Serial.println(F("  patio    da al patio: actividad escolar al aire libre"));
+    Serial.println(F("  interior da a un patio de luces o espacio cerrado"));
+    Serial.println(F("  mixta    ventanas a mas de una orientacion"));
+    return;
+  }
+  // Avisar si no se indica exposicion, pero aceptarlo igualmente
+  if (v.indexOf('/') < 0) {
+    Serial.println(F("[i] No has indicado la exposicion. Ejemplo: E Aula 3B / calle"));
+    Serial.println(F("    Sin ella, el analisis no puede interpretar el ruido exterior."));
+  }
+  v.toCharArray(espacioActual, ESPACIO_MAX);
+  escribirMarca("ESPACIO", espacioActual);
+}
+
+// Anota una incidencia con su hora: obras en el pasillo, ventana abierta,
+// actividad en el aula contigua... Lo que el analisis posterior no puede saber.
+void anotarNota(const String& cmd) {
+  String v = cmd.substring(1);
+  v.trim();
+  if (v.length() == 0) {
+    Serial.println(F("Escribe la nota tras la N. Ejemplo:  N obras en el pasillo"));
+    return;
+  }
+  char buf[80];
+  v.toCharArray(buf, sizeof(buf));
+  escribirMarca("NOTA", buf);
+}
+
+// Construye el campo "estado": marcas de fiabilidad del dato.
+// Devuelve "OK" cuando la lectura es fiable en todas las variables.
+void construirEstado(char* buf, size_t n,
+                     bool errTH, bool errCO2, bool errDB, bool errRTC) {
   buf[0] = '\0';
   bool primera = true;
   auto add = [&](const char* etiqueta) {
@@ -463,35 +605,11 @@ void construirAlertas(char* buf, size_t n, float t, float h, int co2,
     primera = false;
   };
 
-  // Errores de lectura: marcan la fila como no fiable para esa variable.
-  // Imprescindible en estudios desatendidos: sin esto, un sensor que falla
-  // a mitad de estudio registraria ceros indistinguibles de lecturas validas.
-  if (errRTC) add("ERR_RTC");
-  if (errTH)  add("ERR_TH");
-  if (errCO2) add("ERR_CO2");
-  if (errDB)  add("ERR_DB");
+  if (errRTC) add("ERR_RTC");   // marca de tiempo no fiable
+  if (errTH)  add("ERR_TH");    // sensor de temperatura/humedad sin respuesta
+  if (errCO2) add("ERR_CO2");   // sensor de CO2 sin respuesta valida
+  if (errDB)  add("ERR_DB");    // sonometro sin respuesta valida
   if (flashCasiLlena) add("FLASH_BAJA");
-
-  // Temperatura (solo si el sensor responde y la lectura es valida)
-  if (sht41_ok && !errTH) {
-    if      (t >= T_RIESGO)     add("T_RIESGO");
-    else if (t >  T_MAX_LEGAL)  add("T_ALTA");
-    else if (t <  T_MIN_LEGAL)  add("T_BAJA");
-    // Humedad
-    if      (h >  HR_MAX_LEGAL) add("HR_ALTA");
-    else if (h <  HR_MIN_LEGAL) add("HR_BAJA");
-  }
-  // CO2 (0 = lectura no valida, se omite)
-  if (s8_ok && !errCO2 && co2 > 0) {
-    if      (co2 >= CO2_RIESGO) add("CO2_RIESGO");
-    else if (co2 >= CO2_MALA)   add("CO2_MALA");
-    else if (co2 >= CO2_DEFIC)  add("CO2_DEFIC");
-  }
-  // Ruido: se evalua sobre el pico del intervalo
-  if (dbmeter_ok && !errDB && dbMax > 0) {
-    if      (dbMax >= DB_RIESGO)  add("DB_RIESGO");
-    else if (dbMax >= DB_ELEVADO) add("DB_ELEV");
-  }
 
   if (primera) strncpy(buf, "OK", n);
 }
@@ -516,11 +634,14 @@ void logRow() {
 
   // Ruido: nivel equivalente (LAeq) y pico del intervalo.
   // LAeq = 10 * log10( (1/n) * suma(10^(Li/10)) )
-  uint8_t dbEq = 0, dbMax = dbMaxIntervalo;
+  uint8_t dbEq = 0, dbMax = dbMaxIntervalo, dbMaxF = dbMaxFast, dbFondo = 0;
+  uint16_t eventos = dbEventos;
   if (dbNumMuestras > 0) {
     dbEq = (uint8_t)lround(10.0 * log10(dbSumaEnergia / dbNumMuestras));
+    dbFondo = calcularFondo();
+    dbFondoPrevio = dbFondo;   // referencia para los eventos del siguiente
   } else if (dbmeter_ok) {
-    dbEq = readDBMeter(); dbMax = dbEq;
+    dbEq = readDBMeter(); dbMax = dbEq; dbMaxF = dbEq; dbFondo = dbEq;
     if (dbEq == 0) errDB = true;
   }
 
@@ -549,13 +670,12 @@ void logRow() {
     flashCasiLlena = bajaAhora;
   }
 
-  char alertas[64];
-  construirAlertas(alertas, sizeof(alertas), t, h, co2, dbEq, dbMax,
-                   errTH, errCO2, errDB, errRTC);
+  char estado[48];
+  construirEstado(estado, sizeof(estado), errTH, errCO2, errDB, errRTC);
 
-  char row[128];
-  snprintf(row,sizeof(row),"%s,%.2f,%.1f,%d,%d,%d,%s",
-    ts, t, h, co2, dbEq, dbMax, alertas);
+  char row[160];
+  snprintf(row,sizeof(row),"%s,%.2f,%.1f,%d,%d,%d,%d,%d,%u,%s",
+    ts, t, h, co2, dbEq, dbFondo, dbMaxF, dbMax, eventos, estado);
 
   // Escritura con verificacion: si falla, se contabiliza y se avisa
   bool guardado = false;
@@ -581,7 +701,7 @@ void logRow() {
   }
 
   // Reiniciar acumuladores del intervalo
-  dbMaxIntervalo = 0; dbSumaEnergia = 0.0; dbNumMuestras = 0;
+  reiniciarAcumuladoresDb();
 }
 
 
@@ -600,6 +720,19 @@ void mostrarAyuda() {
   Serial.println(F("     tu reloj de referencia la marque."));
   Serial.println(F("     El DS3231 conserva la hora con su pila CR2032,"));
   Serial.println(F("     asi que solo hay que ajustarlo una vez."));
+  Serial.println(F(""));
+  Serial.println(F("  E  IDENTIFICAR EL ESPACIO y su exposicion acustica"));
+  Serial.println(F("     Ejemplo:  E Aula 3B / calle"));
+  Serial.println(F("     Exposiciones: calle | patio | interior | mixta"));
+  Serial.println(F("     Hazlo SIEMPRE al instalar el equipo en un aula nueva."));
+  Serial.println(F("     Sin esta marca, al volcar varios espacios los datos"));
+  Serial.println(F("     quedan mezclados y no hay forma de separarlos."));
+  Serial.println(F("     Escribe solo E para ver el espacio actual."));
+  Serial.println(F(""));
+  Serial.println(F("  N  ANOTAR UNA INCIDENCIA con su hora"));
+  Serial.println(F("     Ejemplo:  N obras en el pasillo"));
+  Serial.println(F("     Util para lo que el analisis no puede deducir:"));
+  Serial.println(F("     ventana abierta, actividad en el aula contigua..."));
   Serial.println(F(""));
   Serial.println(F("  H  Mostrar la hora actual del reloj"));
   Serial.println(F("  D  Volcar por pantalla todo el CSV guardado"));
@@ -652,6 +785,7 @@ void volcarCSV() {
 void infoCSV() {
   size_t tot=LittleFS.totalBytes(), us=LittleFS.usedBytes(), libre=tot-us;
   Serial.printf("Flash: %u KB total | %u KB usado | %u KB libre\n", tot/1024, us/1024, libre/1024);
+  Serial.printf("Espacio: %s\n", espacioActual);
   Serial.printf("Ventana de registro: %02d:00-%02d:00 (todos los dias)\n", HORA_INICIO, HORA_FIN);
   Serial.printf("Intervalo: %lu s  |  CPU: %lu MHz\n", LOG_INTERVAL_MS/1000, getCpuFrequencyMhz());
   if(littlefs_ok && LittleFS.exists(CSV_FILENAME)){
@@ -726,7 +860,7 @@ void borrarCSV() {
       // Recrear con cabecera para poder seguir registrando
       File nf = LittleFS.open(CSV_FILENAME, "w");
       if (nf) {
-        nf.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_max,alertas");
+        nf.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
         nf.close();
       }
       rowCount = 0;
@@ -752,6 +886,8 @@ void procesarComando() {
     case 'D': case 'd': volcarCSV();            break;
     case 'I': case 'i': infoCSV();              break;
     case 'L': case 'l': comprobarVida();        break;
+    case 'E': case 'e': fijarEspacio(cmd);      break;
+    case 'N': case 'n': anotarNota(cmd);        break;
     case 'X': case 'x': borrarCSV();            break;
     case '?':           mostrarAyuda();         break;
     default: Serial.printf("Comando '%c' no reconocido. ? para ayuda.\n", cmd.charAt(0));
@@ -849,7 +985,9 @@ void setup() {
   Serial.printf(">> Estado actual: %s\n", enVentanaHoraria() ? "REGISTRANDO" : "en espera (fuera de horario)");
   Serial.println(F(">> LED a brillo minimo: solo testigo de funcionamiento."));
   Serial.println(F(">> No indica condiciones ambientales, para no contaminar el estudio."));
-  Serial.println(F(">> Comandos: T=reloj  H=hora  D=volcar  I=info  L=comprobar  X=borrar  ?=ayuda"));
+  Serial.println(F(">> IMPORTANTE: identifica el espacio con E antes de empezar."));
+  Serial.println(F(">>   Ejemplo:  E Aula 3B / calle"));
+  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
   Serial.println(F(">> Ejemplo para ajustar hora: T2026-08-06 06:50:00\n"));
 }
 
@@ -876,7 +1014,7 @@ void loop() {
     }
     enVentanaAnterior = activo;
     // Descartar acumuladores al cambiar de estado
-    dbMaxIntervalo = 0; dbSumaEnergia = 0.0; dbNumMuestras = 0;
+    reiniciarAcumuladoresDb();
     lastLog = now - LOG_INTERVAL_MS;   // registrar de inmediato al entrar
   }
 
@@ -890,8 +1028,26 @@ void loop() {
       if (db > dbMaxIntervalo) dbMaxIntervalo = db;
       // El nivel equivalente promedia ENERGIA, no decibelios: la escala es
       // logaritmica y una media aritmetica de dB subestima los picos.
-      dbSumaEnergia += pow(10.0, db / 10.0);
+      double energia = pow(10.0, db / 10.0);
+      dbSumaEnergia += energia;
+      if (db < DB_HIST_SIZE) dbHistograma[db]++;
       dbNumMuestras++;
+
+      // Filtro exponencial sobre la energia: reconstruye la ponderacion
+      // temporal "Fast" (125 ms) a partir de las muestras rapidas de 31 ms.
+      if (!dbFastIniciado) { dbEnergiaFast = energia; dbFastIniciado = true; }
+      else dbEnergiaFast += ALPHA_FAST * (energia - dbEnergiaFast);
+      uint8_t dbF = (uint8_t)lround(10.0 * log10(dbEnergiaFast));
+      if (dbF > dbMaxFast) dbMaxFast = dbF;
+
+      // Deteccion de eventos: se cuenta cada vez que el nivel sube por encima
+      // del fondo mas un margen. La histeresis evita contar varias veces un
+      // mismo evento que oscila alrededor del umbral.
+      if (dbFondoPrevio > 0) {
+        uint8_t umbral = dbFondoPrevio + EVENTO_MARGEN_DB;
+        if (!dbEnEvento && db >= umbral) { dbEventos++; dbEnEvento = true; }
+        else if (dbEnEvento && db < umbral - EVENTO_HISTERESIS) { dbEnEvento = false; }
+      }
     }
   }
 
