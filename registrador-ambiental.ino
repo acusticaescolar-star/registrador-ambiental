@@ -217,7 +217,7 @@ bool     dbEnEvento = false;    // estado del detector de eventos
 
 // Vacia el histograma y los acumuladores del intervalo
 void reiniciarAcumuladoresDb() {
-  reiniciarAcumuladoresDb();
+  dbMaxIntervalo = 0; dbSumaEnergia = 0.0; dbNumMuestras = 0;
   dbEventos = 0; dbEnEvento = false;
   dbMaxFast = 0; dbFastIniciado = false;
   memset(dbHistograma, 0, sizeof(dbHistograma));
