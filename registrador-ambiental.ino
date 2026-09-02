@@ -579,6 +579,41 @@ void fijarEspacio(const String& cmd) {
   escribirMarca("ESPACIO", espacioActual);
 }
 
+// Anota el tiempo de reverberación del espacio (RT60, en segundos).
+// El dispositivo NO lo mide: requiere excitación impulsiva y análisis del
+// decaimiento, fuera del alcance de un sonómetro de nivel. Se introduce aquí
+// el valor obtenido por otro método, para que quede asociado al espacio y el
+// análisis pueda valorar la calidad estructural del aula completa.
+//
+// La norma ANSI/ASA S12.60 fija un máximo de 0,6 s para aulas de hasta 283 m³
+// y 0,7 s para las de 283 a 566 m³, medido con el aula desocupada y amueblada.
+//
+// Formato:  R 0.85
+void anotarReverberacion(const String& cmd) {
+  String v = cmd.substring(1);
+  v.trim();
+  if (v.length() == 0) {
+    Serial.println(F("Tiempo de reverberación del espacio (RT60), en segundos."));
+    Serial.println(F("  Ejemplo:  R 0.85"));
+    Serial.println(F("  El equipo no lo mide: introduce el valor medido por otro método."));
+    Serial.println(F("  Referencia ANSI/ASA S12.60: max. 0,6 s (aulas hasta 283 m3)"));
+    Serial.println(F("                              max. 0,7 s (283-566 m3)"));
+    return;
+  }
+  float rt = v.toFloat();
+  if (rt <= 0.0 || rt > 10.0) {
+    Serial.println(F("[!] Valor fuera de rango. Debe estar entre 0.1 y 10 segundos."));
+    Serial.println(F("    Ejemplo:  R 0.85"));
+    return;
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.2f", rt);
+  escribirMarca("RT60", buf);
+  if (rt <= 0.6)      Serial.println(F("    Cumple el criterio ANSI para aulas de hasta 283 m3."));
+  else if (rt <= 0.7) Serial.println(F("    Cumple para aulas de 283-566 m3; excede para las menores."));
+  else                Serial.println(F("    Excede el maximo de la norma: la inteligibilidad se resiente."));
+}
+
 // Anota una incidencia con su hora: obras en el pasillo, ventana abierta,
 // actividad en el aula contigua... Lo que el análisis posterior no puede saber.
 void anotarNota(const String& cmd) {
@@ -728,6 +763,11 @@ void mostrarAyuda() {
   Serial.println(F("     Sin esta marca, al volcar varios espacios los datos"));
   Serial.println(F("     quedan mezclados y no hay forma de separarlos."));
   Serial.println(F("     Escribe solo E para ver el espacio actual."));
+  Serial.println(F(""));
+  Serial.println(F("  R  TIEMPO DE REVERBERACIÓN del espacio (RT60, segundos)"));
+  Serial.println(F("     Ejemplo:  R 0.85"));
+  Serial.println(F("     El equipo no lo mide: introduce el valor medido aparte."));
+  Serial.println(F("     Sin él, la valoración estructural del aula queda incompleta."));
   Serial.println(F(""));
   Serial.println(F("  N  ANOTAR UNA INCIDENCIA con su hora"));
   Serial.println(F("     Ejemplo:  N obras en el pasillo"));
@@ -888,6 +928,7 @@ void procesarComando() {
     case 'L': case 'l': comprobarVida();        break;
     case 'E': case 'e': fijarEspacio(cmd);      break;
     case 'N': case 'n': anotarNota(cmd);        break;
+    case 'R': case 'r': anotarReverberacion(cmd); break;
     case 'X': case 'x': borrarCSV();            break;
     case '?':           mostrarAyuda();         break;
     default: Serial.printf("Comando '%c' no reconocido. ? para ayuda.\n", cmd.charAt(0));
@@ -987,7 +1028,7 @@ void setup() {
   Serial.println(F(">> No indica condiciones ambientales, para no contaminar el estudio."));
   Serial.println(F(">> IMPORTANTE: identifica el espacio con E antes de empezar."));
   Serial.println(F(">>   Ejemplo:  E Aula 3B / calle"));
-  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
+  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio R=reverb N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
   Serial.println(F(">> Ejemplo para ajustar hora: T2026-08-06 06:50:00\n"));
 }
 
