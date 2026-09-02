@@ -252,7 +252,32 @@ bool flashCasiLlena = false;
 // Se guarda como linea de marca en el CSV, no como columna, para no repetir
 // el nombre en cada registro.
 #define ESPACIO_MAX 96
+#define ESPACIO_FILE "/espacio.txt"
 char espacioActual[ESPACIO_MAX] = "sin identificar";
+
+// El espacio se guarda en la flash y se recupera al arrancar. Sin esto, un
+// reinicio (corte de alimentación, fallo puntual) dejaría el equipo "sin
+// identificar" en mitad de una campaña, con el riesgo de atribuir despues los
+// registros al aula equivocada.
+void guardarEspacio() {
+  if (!littlefs_ok) return;
+  File f = LittleFS.open(ESPACIO_FILE, "w");
+  if (f) { f.print(espacioActual); f.close(); }
+}
+
+void cargarEspacio() {
+  if (!littlefs_ok) return;
+  if (!LittleFS.exists(ESPACIO_FILE)) return;
+  File f = LittleFS.open(ESPACIO_FILE, "r");
+  if (!f) return;
+  String v = f.readString();
+  f.close();
+  v.trim();
+  if (v.length() > 0) {
+    v.toCharArray(espacioActual, ESPACIO_MAX);
+    Serial.printf("  [OK] Espacio recuperado de la flash: %s\n", espacioActual);
+  }
+}
 
 // -- Ventana horaria --
 bool enVentanaAnterior = true;  // para avisar solo en los cambios de estado
@@ -601,6 +626,7 @@ void fijarEspacio(const String& cmd) {
 
   v.toCharArray(espacioActual, ESPACIO_MAX);
   escribirMarca("ESPACIO", espacioActual);
+  guardarEspacio();   // sobrevive a un reinicio
 
   if (!tieneExpo) {
     Serial.println(F("  [i] Sin exposición indicada. Añádela: E ... / calle"));
@@ -919,6 +945,7 @@ void borrarCSV() {
       rowCount = 0;
       fallosEscritura = 0;
       flashCasiLlena = false;
+      // El espacio se conserva: borrar los datos no cambia dónde está el equipo.
       Serial.println(F("[OK] Datos borrados. Fichero recreado, listo para un nuevo estudio.\n"));
       ledEstadoOK();
     } else {
@@ -1012,6 +1039,7 @@ void setup() {
   fase2_leerSensores();
   fase3_pruebaLED();
   fase4_pruebaLittleFS();
+  cargarEspacio();   // recupera la identificación tras un reinicio
 
   Serial.println(F("\n== RESUMEN DE DIAGNÓSTICO =="));
   Serial.printf("  SHT41 (T/H)       : %s\n", sht41_ok    ? "OK":"FALLO");
