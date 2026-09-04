@@ -52,8 +52,15 @@
 //   dB_LAeq  nivel continuo equivalente del intervalo. Promedia ENERGÍA (no
 //            decibelios), que es la magnitud correcta en acústica y la que
 //            exige la normativa.
-//   dB_fondo nivel de fondo (LA90 aprox.): el nivel que se supera el 90 % del
-//            tiempo. Describe el ruido sostenido del aula.
+//   dB_fondo nivel de fondo ESTIMADO: percentil 10 de las muestras del
+//            intervalo (el nivel que se supera el 90 % del tiempo). Describe
+//            el ruido sostenido del aula. No es un LA90 normalizado: un LA90
+//            se calcula por norma sobre la señal continua con ponderación
+//            temporal e intervalos definidos; este valor parte de lecturas
+//            ya promediadas por el módulo cada 31 ms y agregadas por
+//            software. Se usa el nombre "nivel de fondo estimado" para no
+//            sugerir una equivalencia metrológica que no se ha demostrado
+//            (REVISION_RIGOR.md, hallazgo 3).
 //   dB_maxF  pico con ponderación "Fast" (125 ms) reconstruida por software.
 //            Es el comparable con un sonómetro comercial y con los umbrales
 //            de la normativa; sobre el se evaluan las alertas acústicas.
@@ -161,7 +168,7 @@
 // no basta con registrar el LAeq: se anaden el nivel de fondo y un contador de
 // eventos, que capturan esa dimensión.
 #define DB_HIST_SIZE       128   // histograma de niveles (1 dB por casilla)
-#define DB_PERCENTIL_FONDO  10   // LA90: nivel superado el 90 % del tiempo
+#define DB_PERCENTIL_FONDO  10   // percentil 10 = nivel superado el 90 % del tiempo
 #define EVENTO_MARGEN_DB    10   // un evento supera el fondo en esta cantidad
 #define EVENTO_HISTERESIS    3   // margen de salida, evita contar rebotes
 
@@ -223,9 +230,11 @@ void reiniciarAcumuladoresDb() {
   memset(dbHistograma, 0, sizeof(dbHistograma));
 }
 
-// Nivel de fondo del intervalo: percentil bajo de la distribución (LA90),
-// es decir, el nivel que se supera el 90 % del tiempo. Describe el ruido
-// sostenido sobre el que destacan los eventos.
+// Nivel de fondo ESTIMADO del intervalo: percentil bajo de la distribución
+// (percentil 10, el nivel que se supera el 90 % del tiempo). Describe el
+// ruido sostenido sobre el que destacan los eventos. No se denomina "LA90"
+// porque no reproduce el cálculo normalizado de esa magnitud (ver nota del
+// formato CSV, más arriba, y REVISION_RIGOR.md, hallazgo 3).
 uint8_t calcularFondo() {
   if (dbNumMuestras == 0) return 0;
   uint32_t objetivo = (uint32_t)dbNumMuestras * DB_PERCENTIL_FONDO / 100;
@@ -591,8 +600,19 @@ bool escribirMarca(const char* tipo, const char* texto) {
 // Si al instalar el equipo aún no se conocen, basta con volver a ejecutar el
 // comando más tarde con el mismo nombre: el análisis fusiona los datos.
 //
-// Referencias: ANSI/ASA S12.60 fija RT <= 0,6 s (aulas hasta 283 m3) y
-// <= 0,7 s (283-566 m3). DIN 18041 exige STI >= 0,65 en salas de comunicación.
+// Referencias:
+//   RT   CTE DB-HR (España), criterio principal: T <= 0,7 s con el aula
+//        vacía y mobiliario móvil, V <= 350 m3 (supuesto adoptado para
+//        aulas — ver documento de proyecto, apdo. 7.1). Solo es exigible
+//        en obra nueva o rehabilitación con licencia posterior al
+//        RD 1371/2007: en edificios anteriores no lo es, y el resultado
+//        se expresa como que el aula "se aleja de los valores que
+//        exigiría un edificio de nueva construcción", nunca como
+//        incumplimiento. ANSI/ASA S12.60 (0,6 s hasta 283 m3, 0,7 s hasta
+//        566 m3) se cita como referencia internacional convergente.
+//   STI  España no fija un umbral de inteligibilidad para aulas. Se usa
+//        DIN 18041 (>= 0,65, salas de comunicación) como referencia
+//        internacional de buena práctica, no como normativa aplicable.
 void fijarEspacio(const String& cmd) {
   String v = cmd.substring(1);
   v.trim();
@@ -637,21 +657,30 @@ void fijarEspacio(const String& cmd) {
     Serial.println(F("      incompleta: mídela con otro instrumento y repite el comando."));
   }
   if (tieneRT) {
-    // Valorar el RT frente al criterio ANSI
+    // Valorar el RT frente al CTE DB-HR (criterio principal en España).
+    // Supuesto: aula vacía con mobiliario móvil, V <= 350 m3 (documento
+    // de proyecto, 7.1). Si el edificio es anterior al RD 1371/2007 y no
+    // ha tenido licencia de obra posterior, el CTE no es exigible: el
+    // mensaje "por encima" debe leerse como que el aula se aleja de los
+    // valores que exigiría un edificio de nueva construcción, no como
+    // incumplimiento normativo.
     float rt = v.substring(pRT+2).toFloat();
     if (rt > 0) {
-      if (rt <= 0.6)      Serial.println(F("  [OK] RT cumple ANSI S12.60 (aulas hasta 283 m3)."));
-      else if (rt <= 0.7) Serial.println(F("  [i]  RT cumple para 283-566 m3; excede para aulas menores."));
-      else                Serial.println(F("  [!]  RT excede la norma: la inteligibilidad se resiente."));
+      if (rt <= 0.5)      Serial.println(F("  [OK] RT cumple incluso el criterio mas exigente del CTE DB-HR."));
+      else if (rt <= 0.7) Serial.println(F("  [OK] RT cumple el CTE DB-HR (aula con mobiliario movil, V<=350 m3)."));
+      else if (rt <= 0.9) Serial.println(F("  [i]  RT por encima del CTE DB-HR (0,7 s): mejorable."));
+      else                Serial.println(F("  [!]  RT muy por encima del CTE DB-HR: inteligibilidad comprometida."));
+      Serial.println(F("       Ref. internacional convergente: ANSI/ASA S12.60 (0,6-0,7 s segun volumen)."));
     }
   }
   if (tieneSTI) {
     float sti = v.substring(pSTI+3).toFloat();
     if (sti > 0) {
       if (sti >= 0.75)      Serial.println(F("  [OK] STI excelente."));
-      else if (sti >= 0.65) Serial.println(F("  [OK] STI cumple DIN 18041 (salas de comunicación)."));
+      else if (sti >= 0.65) Serial.println(F("  [OK] STI cumple DIN 18041 (salas de comunicacion)."));
       else if (sti >= 0.60) Serial.println(F("  [i]  STI aceptable, por debajo del criterio DIN 18041."));
       else                  Serial.println(F("  [!]  STI insuficiente: la voz no se entiende bien."));
+      if (sti < 0.75) Serial.println(F("       DIN 18041 es una referencia internacional: Espana no fija un umbral de STI para aulas."));
     }
   }
 }
