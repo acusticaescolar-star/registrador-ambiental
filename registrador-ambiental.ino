@@ -32,55 +32,80 @@
 //   autonomía con un banco de 20.000 mAh, frente a 5,5 días a 240 MHz.
 //
 // VENTANA HORARIA:
-//   Solo se registra entre las 07:00 y las 19:00, todos los días (incluidos
-//   sabados y domingos, para permitir estudios de ruido exterior en fin de
-//   semana). Fuera de ese horario el sistema queda en espera sin escribir.
-//   Autonomía a 30 s de intervalo: >11 días incluso en el peor caso.
+//   Por defecto solo se registra entre las 07:00 y las 19:00, todos los días
+//   (incluidos sabados y domingos, para permitir estudios de ruido exterior en
+//   fin de semana). Fuera de ese horario el sistema queda en espera sin
+//   escribir. Autonomía a 30 s de intervalo: >11 días incluso en el peor caso.
+//   La ventana se cambia con el comando W (p. ej. W 0-24) y se guarda en la
+//   flash. LA PRIMERA NOCHE DE CADA CAMPAÑA conviene registrar 24 h: la noche
+//   es el unico tramo con ocupacion nula garantizada, que es justo el supuesto
+//   que exige el calculo de renovacion de aire (revision-rigor-2.md, 22).
 //
 // FORMATO CSV:
-//   timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado
+//   timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,eventos,estado
+//   9 columnas. La columna dB_max (pico crudo de 31 ms) se eliminó al
+//   corregir los hallazgos 12, 13 y 15 de revision-rigor-2.md: ver la nota
+//   "PONDERACIÓN TEMPORAL" más abajo.
 
 //   El campo "estado" marca la FIABILIDAD del dato, no la valoración de las
 //   condiciones (esa se hace al analizar, con la tabla del documento de
 //   proyecto). Vale "OK" o una o más de estas marcas separadas por ';':
 //     ERR_TH ERR_CO2 ERR_DB   sensor sin respuesta valida en esa lectura
 //     ERR_RTC                 marca de tiempo no fiable
+//     CO2_CALENTANDO          el S8 aun no da lectura (~30 s tras encender):
+//                             co2_ppm vale 0 y NO debe usarse como medida
 //     FLASH_BAJA              queda poco espacio de almacenamiento
 //   Si aparece una marca ERR_, esa variable debe excluirse del análisis en
 //   las filas afectadas.
 //   Umbrales según RD 486/1997 Anexo III, RITE (IDA2) y CTE DB-HS 3.
-//   dB_LAeq  nivel continuo equivalente del intervalo. Promedia ENERGÍA (no
-//            decibelios), que es la magnitud correcta en acústica y la que
-//            exige la normativa.
+//   dB_LAeq  nivel continuo equivalente del intervalo, CON UN DECIMAL.
+//            Promedia ENERGÍA (no decibelios), que es la magnitud correcta en
+//            acústica y la que exige la normativa. Las muestras del módulo son
+//            enteras, pero promediar ~240 de ellas recupera resolución por
+//            debajo del dB, necesaria para el reparto exógeno/endógeno
+//            (revision-rigor-2.md, hallazgo 18). El fondo y el pico siguen
+//            siendo enteros por construcción.
 //   dB_fondo nivel de fondo ESTIMADO: percentil 10 de las muestras del
 //            intervalo (el nivel que se supera el 90 % del tiempo). Describe
 //            el ruido sostenido del aula. No es un LA90 normalizado: un LA90
 //            se calcula por norma sobre la señal continua con ponderación
 //            temporal e intervalos definidos; este valor parte de lecturas
-//            ya promediadas por el módulo cada 31 ms y agregadas por
+//            ya promediadas por el módulo cada 125 ms y agregadas por
 //            software. Se usa el nombre "nivel de fondo estimado" para no
 //            sugerir una equivalencia metrológica que no se ha demostrado
 //            (REVISION_RIGOR.md, hallazgo 3).
-//   dB_maxF  pico con ponderación "Fast" (125 ms) reconstruida por software.
-//            Es el comparable con un sonómetro comercial y con los umbrales
-//            de la normativa; sobre el se evaluan las alertas acústicas.
-//   dB_max   pico con las muestras crudas de 31 ms, sensible a impulsos
-//            breves (portazos, sillas). Se acerca a la ponderación "Impulse".
-//            La diferencia dB_max - dB_maxF indica cuan impulsivo es el ruido:
-//            un impulso de 31 ms se atenua ~6,6 dB al aplicar Fast; uno
-//            sostenido de más de 500 ms, nada.
+//   dB_maxF  pico del intervalo, medido sobre el promediado de 125 ms del
+//            propio módulo (su "fast mode"). Es la mejor aproximación
+//            disponible a la ponderación temporal Fast y sobre el se evaluan
+//            las alertas acústicas. NO es una ponderación Fast certificada:
+//            el fabricante no documenta si su promediado es exponencial ni
+//            declara conformidad con IEC 61672 (revision-rigor-2.md, 15).
 //   eventos  número de veces que el nivel sube por encima del fondo más 10 dB.
 //
-//   Los tres últimos capturan la FLUCTUACIÓN del ruido. El estudio BREATHE
+//   El fondo, el pico y los eventos capturan la FLUCTUACIÓN del ruido. El estudio BREATHE
 //   (Foraster et al., 2022, PLOS Medicine) halló que dentro del aula la
 //   fluctuación se asocia de forma consistente con el desarrollo cognitivo,
 //   mientras que el nivel medio apenas lo hace. Registrar solo el LAeq
 //   dejaría fuera la dimensión que la investigación señala como decisiva.
-//   El rango dinámico (dB_max - dB_fondo) es el indicador de fluctuación más
+//   El rango dinámico (dB_maxF - dB_fondo) es el indicador de fluctuación más
 //   directo que puede derivarse de estos datos.
 //
-//   El sonómetro se muestrea cada 125 ms, al mismo ritmo que su promediado
-//   interno ("Fast"), para no perder picos.
+// PONDERACIÓN TEMPORAL (revision-rigor-2.md, hallazgos 12, 13 y 15):
+//   El promediado interno del módulo y el intervalo de lectura son AMBOS de
+//   125 ms. Es la condición que hace que el registro sea continuo: cada
+//   lectura resume exactamente los 125 ms transcurridos desde la anterior y
+//   no queda ningún tramo sin observar.
+//   Antes el módulo promediaba 31 ms y se leía cada 125 ms, de modo que solo
+//   se observaba el 25 % del tiempo y los impulsos de menos de 94 ms se
+//   perdían con probabilidad (94-duración)/125. Se eliminó también el filtro
+//   exponencial que reconstruía "Fast" por software: su constante estaba
+//   calculada para un paso de 31 ms y, aplicada cada 125 ms, daba una
+//   constante de tiempo efectiva de 504 ms en vez de 125 ms.
+//   Contrapartida asumida: al promediar 125 ms se pierde el pico crudo de
+//   31 ms y con el el indicador de impulsividad (dB_max - dB_maxF). No era
+//   una magnitud del estudio BREATHE —que midió ruido de tráfico, de escala
+//   de segundos— y su perdida no afecta al LAeq, al fondo, al recuento de
+//   eventos ni al índice de fluctuación.
 //
 // NO INTERFERENCIA CON EL ESTUDIO:
 //   Durante el registro el LED queda a brillo mínimo (3/255) como simple
@@ -102,6 +127,7 @@
 //   D   volcar el CSV guardado
 //   I   info del fichero y flash
 //   L   destello de comprobación del estado
+//   W 0-24  fijar la ventana horaria de registro (se guarda en la flash)
 //   X   BORRAR todos los datos (pide confirmación)
 //   ?   ayuda
 // El registro de datos sigue activo mientras se aceptan comandos.
@@ -134,19 +160,14 @@
 #define DBM_REG_DECIBEL   0x0A
 
 // Tiempo de promediado interno del sonómetro.
-// 125 ms equivale a la ponderación temporal "Fast" de un sonómetro normalizado.
-// Por defecto el modulo viene a 1000 ms ("Slow"), que suaviza los picos y
-// hace que el máximo del intervalo pierda significado acústico.
-#define DBM_TAVG_MS    31   // muestreo rápido, sensible a impulsos breves
-
-// Reconstrucción de la ponderación "Fast" (125 ms) por software.
-// El sonómetro promedia de forma exponencial. Muestreando a 31 ms se puede
-// reconstruir lo que marcaría a 125 ms aplicando un filtro exponencial de
-// primer orden sobre la ENERGÍA: alpha = 1 - exp(-dt/tau).
-// Así se obtienen a la vez el pico sensible a impulsos (dB_max) y el pico
-// normalizado comparable con un sonómetro comercial (dB_maxF).
-#define DBM_TAU_FAST_MS  125
-#define ALPHA_FAST  0.2196f   // 1 - exp(-31/125)
+// 125 ms es el "fast mode" que documenta el fabricante y el valor mas bajo
+// que documenta: por debajo (el firmware usaba 31 ms) el registro acepta la
+// escritura pero el modulo queda fuera de la configuración caracterizada, y
+// con el la precisión de +/-2 dB de la hoja de caracteristicas.
+// Por defecto el modulo viene a 1000 ms ("slow mode").
+// DEBE COINCIDIR CON DB_SAMPLE_MS: si el promediado es mas corto que el
+// intervalo de lectura, la diferencia es tiempo que no se observa.
+#define DBM_TAVG_MS    125
 
 // -- Sobre la valoración de las condiciones --
 // El firmware NO clasifica las condiciones ambientales: registra los valores
@@ -173,8 +194,10 @@
 #define EVENTO_HISTERESIS    3   // margen de salida, evita contar rebotes
 
 // -- Muestreo del sonómetro --
-// Se muestrea al mismo ritmo que el promediado interno (125 ms) para no
-// perder picos entre lecturas: a 1 s de intervalo quedaban 875 ms sin observar.
+// Se lee al mismo ritmo que el promediado interno (DBM_TAVG_MS) para que el
+// registro sea continuo: cada lectura resume los 125 ms anteriores y no queda
+// ningún tramo sin observar. Cambiar uno de los dos valores sin cambiar el
+// otro reintroduce el hallazgo 12 (huecos) y el 13 (ponderación falseada).
 #define DB_SAMPLE_MS  125UL
 
 // -- Logging --
@@ -192,10 +215,17 @@
 // Solo se registra entre HORA_INICIO y HORA_FIN (todos los días, incluidos
 // fines de semana: permite estudios de ruido exterior en sabado y domingo).
 // Fuera de la ventana el sistema permanece en espera sin escribir en flash.
-#define HORA_INICIO   7    // 07:00 h
-#define HORA_FIN     19    // 19:00 h (se registra hasta las 18:59:59)
-// Nota: la ventana no admite cruce de medianoche (HORA_FIN debe ser mayor
-// que HORA_INICIO). Para registro continuo 24 h, poner 0 y 24.
+#define HORA_INICIO_DEF   7    // 07:00 h
+#define HORA_FIN_DEF     19    // 19:00 h (se registra hasta las 18:59:59)
+// La ventana es AJUSTABLE EN CALIENTE con el comando W y se guarda en la
+// flash: no hace falta recompilar ni volver a programar el equipo. Antes era
+// un #define, y eso hacía impracticable la recomendación de registrar la
+// primera noche de cada campaña (revision-rigor-2.md, hallazgo 22).
+// Nota: la ventana no admite cruce de medianoche (fin debe ser mayor que
+// inicio). Para registro continuo 24 h: W 0-24.
+uint8_t horaInicio = HORA_INICIO_DEF;
+uint8_t horaFin    = HORA_FIN_DEF;
+#define VENTANA_FILE "/ventana.txt"
 
 // -- Objetos globales --
 SensirionI2cSht4x sht4x;
@@ -211,14 +241,11 @@ uint32_t rowCount = 0;
 
 // -- Seguimiento de picos de ruido dentro del intervalo --
 unsigned long lastDbSample = 0;
-uint8_t  dbMaxIntervalo = 0;    // pico observado en el intervalo actual
+uint8_t  dbMaxIntervalo = 0;    // pico del intervalo (promediado de 125 ms)
 double   dbSumaEnergia = 0.0;   // suma de energías para el LAeq
 uint16_t dbNumMuestras = 0;     // número de muestras acumuladas
 uint16_t dbHistograma[DB_HIST_SIZE];  // distribución de niveles del intervalo
 uint8_t  dbFondoPrevio = 0;     // fondo del intervalo anterior (umbral eventos)
-double   dbEnergiaFast = 0.0;   // estado del filtro que reconstruye "Fast"
-uint8_t  dbMaxFast = 0;         // pico según ponderación Fast reconstruida
-bool     dbFastIniciado = false;
 uint16_t dbEventos = 0;         // eventos detectados en el intervalo
 bool     dbEnEvento = false;    // estado del detector de eventos
 
@@ -226,7 +253,6 @@ bool     dbEnEvento = false;    // estado del detector de eventos
 void reiniciarAcumuladoresDb() {
   dbMaxIntervalo = 0; dbSumaEnergia = 0.0; dbNumMuestras = 0;
   dbEventos = 0; dbEnEvento = false;
-  dbMaxFast = 0; dbFastIniciado = false;
   memset(dbHistograma, 0, sizeof(dbHistograma));
 }
 
@@ -290,13 +316,86 @@ void cargarEspacio() {
 
 // -- Ventana horaria --
 bool enVentanaAnterior = true;  // para avisar solo en los cambios de estado
+bool escribirMarca(const char* tipo, const char* texto);   // definida más abajo
+
+// La ventana sobrevive a un reinicio, igual que la identificación del espacio:
+// un corte de alimentación a mitad de campaña no debe devolver el equipo al
+// horario por defecto sin que nadie se entere.
+void guardarVentana() {
+  if (!littlefs_ok) return;
+  File f = LittleFS.open(VENTANA_FILE, "w");
+  if (f) { f.printf("%u-%u", horaInicio, horaFin); f.close(); }
+}
+
+void cargarVentana() {
+  if (!littlefs_ok) return;
+  if (!LittleFS.exists(VENTANA_FILE)) return;
+  File f = LittleFS.open(VENTANA_FILE, "r");
+  if (!f) return;
+  String v = f.readString();
+  f.close();
+  int g = v.indexOf('-');
+  if (g <= 0) return;
+  int ini = v.substring(0, g).toInt();
+  int fin = v.substring(g + 1).toInt();
+  if (ini >= 0 && fin > ini && fin <= 24) {
+    horaInicio = (uint8_t)ini; horaFin = (uint8_t)fin;
+    Serial.printf("  [OK] Ventana recuperada de la flash: %02d:00-%02d:00\n",
+                  horaInicio, horaFin);
+  }
+}
+
+// Comando W: fija la ventana horaria de registro.
+void fijarVentana(const String& cmd) {
+  String v = cmd.substring(1);
+  v.trim();
+  if (v.length() == 0) {
+    Serial.printf("Ventana actual: %02d:00-%02d:00 (todos los días)\n", horaInicio, horaFin);
+    Serial.println(F(""));
+    Serial.println(F("Formato:  W 7-19     registra de 07:00 a 18:59"));
+    Serial.println(F("          W 0-24     registro continuo las 24 h"));
+    Serial.println(F(""));
+    Serial.println(F("LA PRIMERA NOCHE DE CADA CAMPAÑA conviene poner W 0-24."));
+    Serial.println(F("La noche es el unico tramo con ocupacion nula GARANTIZADA,"));
+    Serial.println(F("que es el supuesto que exige el calculo de renovacion de aire"));
+    Serial.println(F("(ACH). Con una sola noche por aula basta; despues se vuelve al"));
+    Serial.println(F("horario del centro con W 7-19 para no gastar memoria de mas."));
+    Serial.println(F("Anade tambien una franja nocturna en franjas.txt, por ejemplo:"));
+    Serial.println(F("   19:00-23:59=Noche *VACIO"));
+    return;
+  }
+  int g = v.indexOf('-');
+  if (g <= 0) {
+    Serial.println(F("Formato incorrecto. Ejemplo:  W 0-24"));
+    return;
+  }
+  int ini = v.substring(0, g).toInt();
+  int fin = v.substring(g + 1).toInt();
+  if (ini < 0 || fin <= ini || fin > 24) {
+    Serial.println(F("[!] Valores no validos. El inicio debe ser menor que el fin"));
+    Serial.println(F("    y el fin como maximo 24. La ventana no cruza medianoche."));
+    return;
+  }
+  horaInicio = (uint8_t)ini; horaFin = (uint8_t)fin;
+  guardarVentana();
+  Serial.printf("  [OK] Ventana de registro: %02d:00-%02d:00\n", horaInicio, horaFin);
+  uint8_t horas = horaFin - horaInicio;
+  if (horas >= 20) {
+    Serial.println(F("  [i] Registro casi continuo: la memoria dura aproximadamente"));
+    Serial.println(F("      la MITAD que con la ventana de 12 h. Vuelca los datos"));
+    Serial.println(F("      antes o vuelve al horario del centro tras la primera noche."));
+  }
+  char vbuf[16];
+  snprintf(vbuf, sizeof(vbuf), "%u-%u", horaInicio, horaFin);
+  escribirMarca("VENTANA", vbuf);
+}
 
 // Devuelve true si la hora actual está dentro de la ventana de registro.
 // Si el RTC no está disponible, registra siempre (para no perder datos).
 bool enVentanaHoraria() {
   if (!ds3231_ok) return true;
   int hora = rtc.now().hour();
-  return (hora >= HORA_INICIO && hora < HORA_FIN);
+  return (hora >= horaInicio && hora < horaFin);
 }
 
 
@@ -427,8 +526,9 @@ void fase1_scanI2C() {
   if(!sht41_ok)   Serial.println(F("  -> SHT41: cols 14B(SCL) 15B(SDA) 13B(3V3) 12B(GND). Girado 180!"));
   if(!dbmeter_ok) Serial.println(F("  -> DBMETER: cols 22B(SCL) 23B(SDA) 20B(3V3) 24B(GND)."));
 
-  // Configurar el promediado interno del sonómetro a 125 ms ("Fast").
-  // Por defecto viene a 1000 ms, que suaviza los picos.
+  // Configurar el promediado interno del sonómetro a 125 ms ("fast mode").
+  // Por defecto viene a 1000 ms ("slow mode"), que suaviza los picos.
+  // El valor debe coincidir con DB_SAMPLE_MS para que no queden huecos.
   if (dbmeter_ok) {
     if (setDBMeterTavg(DBM_TAVG_MS)) {
       delay(20);
@@ -531,7 +631,7 @@ void fase4_pruebaLittleFS() {
   const char* tf="/test_escritura.csv";
   File f=LittleFS.open(tf,"w");
   if(!f){ Serial.println(F("  [!!] No se puede crear fichero.")); littlefs_ok=false; return; }
-  f.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
+  f.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,eventos,estado");
   f.println("2025-04-15T09:00:00,22.50,55.0,750,48,42,50,52,3,OK");
   f.println("2025-04-15T09:00:03,28.10,45.0,1350,58,44,66,71,12,ERR_CO2");
   f.close();
@@ -545,7 +645,7 @@ void fase4_pruebaLittleFS() {
 
   if(!LittleFS.exists(CSV_FILENAME)){
     File lg=LittleFS.open(CSV_FILENAME,"w");
-    lg.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
+    lg.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,eventos,estado");
     lg.close();
     Serial.printf("  [OK] Fichero de log creado: %s\n", CSV_FILENAME);
   } else {
@@ -619,7 +719,7 @@ void fijarEspacio(const String& cmd) {
   if (v.length() == 0) {
     Serial.printf("Espacio actual: %s\n", espacioActual);
     Serial.println(F(""));
-    Serial.println(F("Formato:  E Aula 3B / calle / RT 0.85 / STI 0.62"));
+    Serial.println(F("Formato:  E Aula 3B / calle / RT 0.85 / STI 0.62 / CEXT 420"));
     Serial.println(F("  exposición: calle | patio | interior | mixta"));
     Serial.println(F("    calle     da a vía pública: el exterior es sobre todo tráfico"));
     Serial.println(F("    patio     da al patio: actividad escolar al aire libre"));
@@ -627,6 +727,10 @@ void fijarEspacio(const String& cmd) {
     Serial.println(F("    mixta     ventanas a más de una orientación"));
     Serial.println(F("  RT   reverberación en segundos (T30, media de 500/1k/2k Hz)"));
     Serial.println(F("  STI  índice de inteligibilidad (0 a 1)"));
+    Serial.println(F("  CEXT CO2 exterior en ppm, medido al aire libre junto al aula"));
+    Serial.println(F("       (p. ej. CEXT 420). Sin el, el analisis estima el exterior"));
+    Serial.println(F("       con el minimo interior del dia, lo que SOBRESTIMA la"));
+    Serial.println(F("       ventilacion: el aula parece mejor ventilada de lo que esta."));
     Serial.println(F(""));
     Serial.println(F("Todo salvo el nombre es opcional. El equipo no mide RT ni STI:"));
     Serial.println(F("introduce los valores medidos con otro instrumento. Si aún no"));
@@ -643,10 +747,18 @@ void fijarEspacio(const String& cmd) {
   int pSTI = low.indexOf("sti");
   tieneRT  = (pRT  >= 0);
   tieneSTI = (pSTI >= 0);
+  bool tieneCext = (low.indexOf("cext") >= 0);
 
   v.toCharArray(espacioActual, ESPACIO_MAX);
   escribirMarca("ESPACIO", espacioActual);
   guardarEspacio();   // sobrevive a un reinicio
+
+  // El umbral de eventos deja de ser valido al cambiar de aula: entre un aula
+  // interior y otra a fachada el fondo difiere en 10-15 dB, y arrastrarlo
+  // haria que el primer intervalo del espacio nuevo contase eventos que no lo
+  // son, o ninguno. Con 0 el detector queda inhibido un intervalo (30 s) y
+  // vuelve a arrancar con el fondo real (revision-rigor-2.md, hallazgo 20).
+  dbFondoPrevio = 0;
 
   if (!tieneExpo) {
     Serial.println(F("  [i] Sin exposición indicada. Añádela: E ... / calle"));
@@ -655,6 +767,11 @@ void fijarEspacio(const String& cmd) {
   if (!tieneRT) {
     Serial.println(F("  [i] Sin reverberación (RT). La valoración estructural queda"));
     Serial.println(F("      incompleta: mídela con otro instrumento y repite el comando."));
+  }
+  if (!tieneCext) {
+    Serial.println(F("  [i] Sin CO2 exterior (CEXT). El analisis lo estimara con el"));
+    Serial.println(F("      minimo interior, lo que sobrestima la ventilacion. Mide al"));
+    Serial.println(F("      aire libre junto al aula y repite:  E ... / CEXT 420"));
   }
   if (tieneRT) {
     // Valorar el RT frente al CTE DB-HR (criterio principal en España).
@@ -702,7 +819,8 @@ void anotarNota(const String& cmd) {
 // Construye el campo "estado": marcas de fiabilidad del dato.
 // Devuelve "OK" cuando la lectura es fiable en todas las variables.
 void construirEstado(char* buf, size_t n,
-                     bool errTH, bool errCO2, bool errDB, bool errRTC) {
+                     bool errTH, bool errCO2, bool errDB, bool errRTC,
+                     bool co2Calentando, bool dbMuestraUnica) {
   buf[0] = '\0';
   bool primera = true;
   auto add = [&](const char* etiqueta) {
@@ -714,7 +832,18 @@ void construirEstado(char* buf, size_t n,
   if (errRTC) add("ERR_RTC");   // marca de tiempo no fiable
   if (errTH)  add("ERR_TH");    // sensor de temperatura/humedad sin respuesta
   if (errCO2) add("ERR_CO2");   // sensor de CO2 sin respuesta valida
+  // El S8 devuelve 0 mientras se calienta (~30 s tras el encendido). No es una
+  // averia, pero TAMPOCO es una medida: sin esta marca la fila saldria con
+  // co2_ppm = 0 y estado "OK", que es justo lo que el campo estado existe para
+  // evitar (revision-rigor-2.md, hallazgo 17).
+  if (co2Calentando) add("CO2_CALENTANDO");
   if (errDB)  add("ERR_DB");    // sonómetro sin respuesta valida
+  // Intervalo sin muestras acumuladas: los cuatro niveles acusticos salen de
+  // UNA sola lectura, de modo que LAeq = fondo = pico y el rango dinamico es
+  // cero por construccion, no porque el aula sea silenciosa. Sin esta marca la
+  // fila entraba en los promedios y en el indice de fluctuacion como si fuera
+  // un intervalo medido (revision-rigor-2.md, hallazgo 21).
+  if (dbMuestraUnica) add("DB_MUESTRA_UNICA");
   if (flashCasiLlena) add("FLASH_BAJA");
 
   if (primera) strncpy(buf, "OK", n);
@@ -722,7 +851,8 @@ void construirEstado(char* buf, size_t n,
 
 void logRow() {
   float t=0,h=0; int co2=0;
-  bool errTH=false, errCO2=false, errDB=false, errRTC=false;
+  bool errTH=false, errCO2=false, errDB=false, errRTC=false, co2Calentando=false;
+  bool dbMuestraUnica=false;
 
   // Lectura T/HR con detección de error
   if (sht41_ok) {
@@ -735,20 +865,35 @@ void logRow() {
     int16_t r = sensor_S8->get_co2();
     if (r > 0) co2 = r;
     else if (r < 0) errCO2 = true;
-    // r == 0 durante el calentamiento inicial: no se marca como error
+    else co2Calentando = true;   // r == 0: calentamiento, no es dato valido
   }
 
   // Ruido: nivel equivalente (LAeq) y pico del intervalo.
   // LAeq = 10 * log10( (1/n) * suma(10^(Li/10)) )
-  uint8_t dbEq = 0, dbMax = dbMaxIntervalo, dbMaxF = dbMaxFast, dbFondo = 0;
+  // El LAeq se guarda con UN DECIMAL. Cada muestra del modulo es un entero de
+  // dB, pero el promedio energetico de ~240 muestras recupera resolucion por
+  // debajo del dB, y esa resolucion importa: el reparto exogeno/endogeno resta
+  // energias de dos niveles proximos y con enteros el resultado oscilaba
+  // decenas de puntos porcentuales (revision-rigor-2.md, hallazgo 18).
+  // El fondo y el pico siguen siendo enteros: el fondo sale de un histograma
+  // de 1 dB y el pico es el maximo de muestras enteras.
+  float   dbEq = 0.0f;
+  uint8_t dbMaxF = dbMaxIntervalo, dbFondo = 0;
   uint16_t eventos = dbEventos;
   if (dbNumMuestras > 0) {
-    dbEq = (uint8_t)lround(10.0 * log10(dbSumaEnergia / dbNumMuestras));
+    dbEq = (float)(10.0 * log10(dbSumaEnergia / dbNumMuestras));
     dbFondo = calcularFondo();
     dbFondoPrevio = dbFondo;   // referencia para los eventos del siguiente
   } else if (dbmeter_ok) {
-    dbEq = readDBMeter(); dbMax = dbEq; dbMaxF = dbEq; dbFondo = dbEq;
-    if (dbEq == 0) errDB = true;
+    // Ruta de respaldo: el intervalo no ha acumulado ninguna muestra (primer
+    // intervalo tras el arranque o tras un cambio de ventana horaria). Se hace
+    // una lectura suelta para no perder la fila, pero los cuatro niveles salen
+    // del mismo valor: hay que marcarlo para que el analisis no lo lea como un
+    // intervalo de fluctuacion nula (revision-rigor-2.md, hallazgo 21).
+    uint8_t v = readDBMeter();
+    dbEq = (float)v; dbMaxF = v; dbFondo = v;
+    if (v == 0) errDB = true;
+    else        dbMuestraUnica = true;
   }
 
   // Marca de tiempo
@@ -776,12 +921,15 @@ void logRow() {
     flashCasiLlena = bajaAhora;
   }
 
-  char estado[48];
-  construirEstado(estado, sizeof(estado), errTH, errCO2, errDB, errRTC);
+  // 80 B: las marcas no son excluyentes entre si y la cadena mas larga
+  // realista (ERR_RTC;ERR_TH;ERR_CO2;DB_MUESTRA_UNICA;FLASH_BAJA) ocupa 51.
+  char estado[80];
+  construirEstado(estado, sizeof(estado), errTH, errCO2, errDB, errRTC,
+                  co2Calentando, dbMuestraUnica);
 
-  char row[160];
-  snprintf(row,sizeof(row),"%s,%.2f,%.1f,%d,%d,%d,%d,%d,%u,%s",
-    ts, t, h, co2, dbEq, dbFondo, dbMaxF, dbMax, eventos, estado);
+  char row[200];
+  snprintf(row,sizeof(row),"%s,%.2f,%.1f,%d,%.1f,%d,%d,%u,%s",
+    ts, t, h, co2, dbEq, dbFondo, dbMaxF, eventos, estado);
 
   // Escritura con verificación: si falla, se contabiliza y se avisa
   bool guardado = false;
@@ -828,9 +976,12 @@ void mostrarAyuda() {
   Serial.println(F("     así que solo hay que ajustarlo una vez."));
   Serial.println(F(""));
   Serial.println(F("  E  IDENTIFICAR EL ESPACIO y su exposición acústica"));
-  Serial.println(F("     Ejemplo:  E Aula 3B / calle / RT 0.85 / STI 0.62"));
+  Serial.println(F("     Ejemplo:  E Aula 3B / calle / RT 0.85 / STI 0.62 / CEXT 420"));
   Serial.println(F("     Exposiciones: calle | patio | interior | mixta"));
   Serial.println(F("     RT y STI son opcionales: medidos con otro instrumento."));
+  Serial.println(F("     CEXT es el CO2 exterior en ppm: la lectura estable que"));
+  Serial.println(F("     da el propio equipo al aire libre antes de instalarlo"));
+  Serial.println(F("     (comando C). Sin ella la ventilacion sale sobrestimada."));
   Serial.println(F("     Escribe solo E para ver el formato completo."));
   Serial.println(F("     Hazlo SIEMPRE al instalar el equipo en un aula nueva."));
   Serial.println(F("     Sin esta marca, al volcar varios espacios los datos"));
@@ -841,6 +992,23 @@ void mostrarAyuda() {
   Serial.println(F("     Ejemplo:  N obras en el pasillo"));
   Serial.println(F("     Útil para lo que el análisis no puede deducir:"));
   Serial.println(F("     ventana abierta, actividad en el aula contigua..."));
+  Serial.println(F(""));
+  Serial.println(F("  W  VENTANA HORARIA de registro (se guarda en la flash)"));
+  Serial.println(F("     Ejemplo:  W 0-24   registro continuo las 24 h"));
+  Serial.println(F("               W 7-19   horario del centro (por defecto)"));
+  Serial.println(F("     La PRIMERA NOCHE de cada campaña conviene W 0-24: es el"));
+  Serial.println(F("     unico tramo con ocupacion nula garantizada, el supuesto"));
+  Serial.println(F("     que exige el calculo de renovacion de aire (ACH)."));
+  Serial.println(F("     Escribe solo W para ver la ventana actual."));
+  Serial.println(F(""));
+  Serial.println(F("  C  VERIFICAR EL SENSOR DE CO2 (hazlo antes de cada campaña)"));
+  Serial.println(F("     C           diagnostico: lectura, estado del sensor y ABC."));
+  Serial.println(F("                 No modifica nada. Al aire libre y tras 30 min,"));
+  Serial.println(F("                 la lectura que da es el valor CEXT del comando E."));
+  Serial.println(F("     C CALIBRAR  fuerza la calibracion de fondo. SOLO al aire libre:"));
+  Serial.println(F("                 no ajusta contra un patron, le ordena al sensor"));
+  Serial.println(F("                 asumir que lo que mide AHORA son 400 ppm. Dentro"));
+  Serial.println(F("                 del aula estropea el sensor en vez de arreglarlo."));
   Serial.println(F(""));
   Serial.println(F("  H  Mostrar la hora actual del reloj"));
   Serial.println(F("  D  Volcar por pantalla todo el CSV guardado"));
@@ -894,7 +1062,7 @@ void infoCSV() {
   size_t tot=LittleFS.totalBytes(), us=LittleFS.usedBytes(), libre=tot-us;
   Serial.printf("Flash: %u KB total | %u KB usado | %u KB libre\n", tot/1024, us/1024, libre/1024);
   Serial.printf("Espacio: %s\n", espacioActual);
-  Serial.printf("Ventana de registro: %02d:00-%02d:00 (todos los días)\n", HORA_INICIO, HORA_FIN);
+  Serial.printf("Ventana de registro: %02d:00-%02d:00 (todos los días)\n", horaInicio, horaFin);
   Serial.printf("Intervalo: %lu s  |  CPU: %lu MHz\n", LOG_INTERVAL_MS/1000, getCpuFrequencyMhz());
   if(littlefs_ok && LittleFS.exists(CSV_FILENAME)){
     File f=LittleFS.open(CSV_FILENAME,"r");
@@ -904,7 +1072,7 @@ void infoCSV() {
     int regs = ln>0?ln-1:0;
     Serial.printf("CSV: %u bytes, %d registros\n", by, regs);
     // Autonomía estimada en el peor caso (86 B/fila, todas las alertas)
-    uint32_t regDia = ((HORA_FIN-HORA_INICIO)*3600UL)/(LOG_INTERVAL_MS/1000);
+    uint32_t regDia = ((horaFin-horaInicio)*3600UL)/(LOG_INTERVAL_MS/1000);
     uint32_t capacidad = libre / 86;
     Serial.printf("Autonomía restante (peor caso): %lu registros = %.1f días\n",
       capacidad, (float)capacidad/regDia);
@@ -968,7 +1136,7 @@ void borrarCSV() {
       // Recrear con cabecera para poder seguir registrando
       File nf = LittleFS.open(CSV_FILENAME, "w");
       if (nf) {
-        nf.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,dB_max,eventos,estado");
+        nf.println("timestamp_iso8601,temp_C,hum_pct,co2_ppm,dB_LAeq,dB_fondo,dB_maxF,eventos,estado");
         nf.close();
       }
       rowCount = 0;
@@ -985,6 +1153,170 @@ void borrarCSV() {
   }
 }
 
+// ============================================================
+// COMANDO C - Verificación del CO2 y calibración de fondo del S8
+// ============================================================
+// El Senseair S8 mantiene su exactitud con una autocalibración de línea base
+// (ABC) que necesita ver aire exterior (~400-420 ppm) periódicamente. En un
+// aula ocupada de forma continua ese contacto puede no darse y el cero deriva
+// sin aviso (revision-rigor-2.md, hallazgo 8).
+//
+// El protocolo de campaña dice: exponer el equipo al aire libre 30 minutos y
+// comprobar que la lectura converge a ~420 ppm. Este comando ejecuta esa
+// comprobación y, si de verdad hace falta, la corrección.
+//
+//   C           diagnóstico: lectura actual, estado del sensor y periodo ABC.
+//               No modifica nada. Es lo que hay que hacer siempre.
+//   C CALIBRAR  fuerza una calibración de fondo. SOLO al aire libre.
+//
+// Por qué la calibración va en un comando aparte y no dentro de C: la
+// calibración de fondo NO ajusta el sensor contra un patrón, sino que le
+// ordena asumir que LO QUE ESTÁ MIDIENDO AHORA son 400 ppm. Ejecutada dentro
+// del aula destruye la calibración en lugar de arreglarla, y el daño es
+// silencioso. Un comando que se teclea entero no se dispara por descuido.
+//
+// Dos cautelas técnicas que el código aplica y conviene no perder:
+//
+//  1. get_meter_status(), get_ABC_period() y get_acknowledgement() devuelven 0
+//     tanto si el registro vale 0 como si falla la comunicación con el sensor.
+//     Un cable suelto se leería, por tanto, como "sin errores". Por eso lo
+//     primero es una lectura de CO2 válida, que sí distingue ambos casos.
+//  2. El sensor PUEDE NEGARSE a calibrar si la señal es inestable en ese
+//     momento, y lo hace sin devolver error. La especificación Modbus define
+//     el bit 5 del registro de reconocimiento (0x0020) para saberlo. Mandar el
+//     comando sin comprobar ese bit es el error habitual: se da por hecha una
+//     calibración que no se ha producido.
+//
+// Referencia: "Modbus on Senseair S8", doc. TDE2067 — HR1 registro de
+// reconocimiento, HR2 comando especial 0x7C06 (calibración de fondo),
+// HR32 periodo ABC.
+void calibrarCO2(const String& cmd) {
+  if (!s8_ok) {
+    Serial.println(F("[!] Sensor de CO2 no disponible: no hay nada que verificar."));
+    return;
+  }
+
+  String arg = cmd.substring(1);
+  arg.trim();
+  arg.toLowerCase();
+  bool calibrar = (arg == "calibrar");
+
+  Serial.println(F("\n===== VERIFICACIÓN DEL SENSOR DE CO2 ====="));
+
+  // (1) Lectura válida: sirve de prueba de vida de la comunicación
+  int16_t antes = sensor_S8->get_co2();
+  if (antes < 0) {
+    Serial.println(F("[!] El sensor no responde. Revisa el UART y la alimentación de 5 V."));
+    Serial.println(F("    Sin comunicación, el resto de registros leería 0 y pareceria correcto."));
+    return;
+  }
+  if (antes == 0) {
+    Serial.println(F("[i] El sensor devuelve 0: aún se está calentando (~30 s tras encender)."));
+    Serial.println(F("    Espera y repite el comando."));
+    return;
+  }
+  Serial.printf("  Lectura actual .......... %d ppm\n", antes);
+
+  // (2) Estado interno del sensor
+  int16_t st = sensor_S8->get_meter_status();
+  if (st & S8_MASK_METER_ANY_ERROR) {
+    Serial.println(F("  Estado .................. [!!] EL SENSOR DECLARA ERROR"));
+    if (st & S8_MASK_METER_FATAL_ERROR)             Serial.println(F("      - error fatal"));
+    if (st & S8_MASK_METER_OFFSET_REGULATION_ERROR) Serial.println(F("      - error de regulación de offset"));
+    if (st & S8_MASK_METER_ALGORITHM_ERROR)         Serial.println(F("      - error de algoritmo"));
+    if (st & S8_MASK_METER_OUTPUT_ERROR)            Serial.println(F("      - error de salida"));
+    if (st & S8_MASK_METER_SELF_DIAG_ERROR)         Serial.println(F("      - error de autodiagnóstico"));
+    if (st & S8_MASK_METER_OUT_OF_RANGE)            Serial.println(F("      - medida fuera de rango"));
+    if (st & S8_MASK_METER_MEMORY_ERROR)            Serial.println(F("      - error de memoria"));
+    Serial.println(F("\n  Un sensor que declara error NO se calibra: la calibración"));
+    Serial.println(F("  enmascararia el fallo. Sustituye el sensor.\n"));
+    return;
+  }
+  Serial.println(F("  Estado .................. sin errores declarados"));
+
+  // (3) Autocalibración automática
+  int16_t abc = sensor_S8->get_ABC_period();
+  if (abc > 0) Serial.printf("  Autocalibración ABC ..... activa, periodo %d h\n", abc);
+  else         Serial.println(F("  Autocalibración ABC ..... SUSPENDIDA (periodo 0)"));
+
+  if (!calibrar) {
+    // --- Modo diagnóstico: interpretar la lectura y decir qué hacer ---
+    Serial.println(F("\n  --- Interpretación (válida SOLO al aire libre, tras 30 min) ---"));
+    if (antes >= 380 && antes <= 470) {
+      Serial.println(F("  [OK] Compatible con aire exterior. El sensor NO necesita calibrarse."));
+      Serial.printf("       Anota este valor al identificar el espacio:  E <aula> / CEXT %d\n", antes);
+    } else if (antes < 380) {
+      Serial.println(F("  [!] Por debajo del aire exterior. Si el equipo lleva 30 min"));
+      Serial.println(F("      al aire libre, hay deriva a la baja: procede calibrar."));
+    } else if (antes <= 550) {
+      Serial.println(F("  [!] Algo alto para aire exterior. Antes de calibrar, descarta"));
+      Serial.println(F("      lo mas probable: gente cerca, trafico, patio cerrado, una"));
+      Serial.println(F("      salida de extraccion, o menos de 30 min de estabilizacion."));
+    } else {
+      Serial.println(F("  [!!] Demasiado alto para ser aire exterior. Casi con seguridad"));
+      Serial.println(F("       el equipo NO esta al aire libre, o hay alguien al lado."));
+      Serial.println(F("       Calibrar ahora fijaria este valor como 400 ppm y arruinaria"));
+      Serial.println(F("       todas las medidas posteriores."));
+    }
+    Serial.println(F("\n  Si procede calibrar, escribe:  C CALIBRAR"));
+    Serial.println(F("  Requisito: equipo al aire libre, lejos de trafico y de personas,"));
+    Serial.println(F("  quieto y con 30 minutos de estabilizacion.\n"));
+    return;
+  }
+
+  // --- Calibración de fondo forzada ---
+  Serial.println(F("\n  --- CALIBRACIÓN DE FONDO ---"));
+  Serial.printf("  Se le va a ordenar al sensor asumir que %d ppm son 400 ppm.\n", antes);
+  if (antes > 550) {
+    Serial.println(F("  [!!] CANCELADO: esa lectura no es aire exterior."));
+    Serial.println(F("       Por encima de 550 ppm el comando no se ejecuta, porque el"));
+    Serial.println(F("       resultado seria un sensor peor calibrado que antes."));
+    Serial.println(F("       Saca el equipo al aire libre, espera 30 min y repite.\n"));
+    return;
+  }
+
+  if (!sensor_S8->manual_calibration()) {
+    Serial.println(F("  [!] No se pudo enviar el comando de calibración al sensor.\n"));
+    escribirMarca("CALIBRACION", "fallo de comunicacion");
+    return;
+  }
+
+  // Esperar al ciclo de lámpara y COMPROBAR el bit de reconocimiento: el
+  // sensor puede haber ignorado la orden si la señal era inestable.
+  Serial.print(F("  Esperando confirmación del sensor"));
+  bool hecha = false;
+  for (int i = 0; i < 15 && !hecha; i++) {   // hasta 30 s
+    delay(2000);
+    Serial.print(F("."));
+    int16_t ack = sensor_S8->get_acknowledgement();
+    hecha = (ack & S8_MASK_CO2_BACKGROUND_CALIBRATION) != 0;
+  }
+  Serial.println();
+
+  char cbuf[64];
+  if (!hecha) {
+    Serial.println(F("  [!] El sensor NO confirma la calibración (bit 5 sin activar)."));
+    Serial.println(F("      Suele significar que la concentración estaba cambiando en ese"));
+    Serial.println(F("      momento. Deja el equipo quieto unos minutos mas y repite."));
+    Serial.println(F("      IMPORTANTE: la calibración NO se ha aplicado.\n"));
+    snprintf(cbuf, sizeof(cbuf), "NO realizada / antes %d ppm", antes);
+    escribirMarca("CALIBRACION", cbuf);
+    return;
+  }
+
+  delay(3000);
+  int16_t despues = sensor_S8->get_co2();
+  Serial.println(F("  [OK] Calibración de fondo CONFIRMADA por el sensor."));
+  Serial.printf("       Antes: %d ppm   ->   Ahora: %d ppm\n", antes, despues);
+  Serial.printf("       Anota el exterior al identificar el espacio:  E <aula> / CEXT %d\n",
+                despues > 0 ? despues : 400);
+  Serial.println(F("       Queda anotada en el CSV: la serie de CO2 tiene un salto en"));
+  Serial.println(F("       este instante y el analisis debe saberlo.\n"));
+
+  snprintf(cbuf, sizeof(cbuf), "OK / antes %d ppm / despues %d ppm", antes, despues);
+  escribirMarca("CALIBRACION", cbuf);
+}
+
 void procesarComando() {
   String cmd=Serial.readStringUntil('\n');
   cmd.trim();
@@ -997,6 +1329,8 @@ void procesarComando() {
     case 'L': case 'l': comprobarVida();        break;
     case 'E': case 'e': fijarEspacio(cmd);      break;
     case 'N': case 'n': anotarNota(cmd);        break;
+    case 'W': case 'w': fijarVentana(cmd);      break;
+    case 'C': case 'c': calibrarCO2(cmd);       break;
     case 'X': case 'x': borrarCSV();            break;
     case '?':           mostrarAyuda();         break;
     default: Serial.printf("Comando '%c' no reconocido. ? para ayuda.\n", cmd.charAt(0));
@@ -1069,6 +1403,7 @@ void setup() {
   fase3_pruebaLED();
   fase4_pruebaLittleFS();
   cargarEspacio();   // recupera la identificación tras un reinicio
+  cargarVentana();   // y la ventana horaria ajustada con W
 
   Serial.println(F("\n== RESUMEN DE DIAGNÓSTICO =="));
   Serial.printf("  SHT41 (T/H)       : %s\n", sht41_ok    ? "OK":"FALLO");
@@ -1091,13 +1426,15 @@ void setup() {
   enVentanaAnterior = enVentanaHoraria();
 
   Serial.printf("\n>> Ventana de registro: %02d:00-%02d:00 (todos los días, incl. fines de semana)\n",
-    HORA_INICIO, HORA_FIN);
+    horaInicio, horaFin);
   Serial.printf(">> Estado actual: %s\n", enVentanaHoraria() ? "REGISTRANDO" : "en espera (fuera de horario)");
   Serial.println(F(">> LED a brillo mínimo: solo testigo de funcionamiento."));
   Serial.println(F(">> No indica condiciones ambientales, para no contaminar el estudio."));
   Serial.println(F(">> IMPORTANTE: identifica el espacio con E antes de empezar."));
-  Serial.println(F(">>   Ejemplo:  E Aula 3B / calle / RT 0.85"));
-  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio N=nota D=volcar I=info L=test X=borrar ?=ayuda"));
+  Serial.println(F(">>   Ejemplo:  E Aula 3B / calle / RT 0.85 / CEXT 420"));
+  Serial.println(F(">>   CEXT es la lectura al aire libre (comando C) antes de instalar."));
+  Serial.println(F(">> Comandos: T=reloj H=hora E=espacio N=nota W=ventana C=calibrar"));
+  Serial.println(F(">>           D=volcar I=info L=test X=borrar ?=ayuda"));
   Serial.println(F(">> Ejemplo para ajustar hora: T2026-08-06 06:50:00\n"));
 }
 
@@ -1120,11 +1457,16 @@ void loop() {
       DateTime n = rtc.now();
       Serial.printf("\n>> %s ventana de registro (%02d:%02d) — activa %02d:00-%02d:00\n\n",
         activo ? "ENTRANDO en" : "SALIENDO de", n.hour(), n.minute(),
-        HORA_INICIO, HORA_FIN);
+        horaInicio, horaFin);
     }
     enVentanaAnterior = activo;
     // Descartar acumuladores al cambiar de estado
     reiniciarAcumuladoresDb();
+    // Y tambien la referencia de fondo: al entrar en la ventana por la manana,
+    // el umbral de eventos del primer intervalo seria el fondo de las 18:59 del
+    // dia anterior (revision-rigor-2.md, hallazgo 20). Con 0 el detector queda
+    // inhibido un intervalo y arranca con el fondo real de la manana.
+    dbFondoPrevio = 0;
     lastLog = now - LOG_INTERVAL_MS;   // registrar de inmediato al entrar
   }
 
@@ -1143,12 +1485,10 @@ void loop() {
       if (db < DB_HIST_SIZE) dbHistograma[db]++;
       dbNumMuestras++;
 
-      // Filtro exponencial sobre la energía: reconstruye la ponderación
-      // temporal "Fast" (125 ms) a partir de las muestras rápidas de 31 ms.
-      if (!dbFastIniciado) { dbEnergiaFast = energia; dbFastIniciado = true; }
-      else dbEnergiaFast += ALPHA_FAST * (energia - dbEnergiaFast);
-      uint8_t dbF = (uint8_t)lround(10.0 * log10(dbEnergiaFast));
-      if (dbF > dbMaxFast) dbMaxFast = dbF;
+      // Ya no hay filtro software para reconstruir "Fast": el promediado de
+      // 125 ms lo hace el propio módulo (DBM_TAVG_MS), de modo que cada
+      // lectura ya es el valor ponderado y el pico del intervalo es
+      // directamente dbMaxIntervalo.
 
       // Detección de eventos: se cuenta cada vez que el nivel sube por encima
       // del fondo más un margen. La histéresis evita contar varias veces un
